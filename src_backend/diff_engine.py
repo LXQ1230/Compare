@@ -6,7 +6,8 @@ from diff_match_patch import diff_match_patch
 def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
     """字符级 diff，返回合并后的 segments 和统计信息。"""
     dmp = diff_match_patch()
-    raw_diffs = dmp.diff_main(orig, modified, timeout=0)
+    dmp.Diff_Timeout = 0
+    raw_diffs = dmp.diff_main(orig, modified)
     dmp.diff_cleanupSemantic(raw_diffs)
 
     segments: list[dict] = []
