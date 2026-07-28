@@ -40,7 +40,9 @@ export const useCompareStore = defineStore('compare', () => {
     const collectedSegments: { index: number; data: Segment[] }[] = [];
     let receivedMeta: CompareMeta | null = null;
 
-    await api.compareFiles(
+    const _resolvePromise = Promise.withResolvers<void>();
+
+    api.compareFiles(
       fileA,
       fileB,
       (msg: StreamMessage) => {
@@ -63,6 +65,7 @@ export const useCompareStore = defineStore('compare', () => {
             collectedSegments.push({ index: msg.index, data: msg.data as Segment[] });
             break;
           case 'done':
+            _resolvePromise.resolve();
             break;
         }
       },
@@ -78,9 +81,12 @@ export const useCompareStore = defineStore('compare', () => {
         } else {
           error.value = err;
         }
+        _resolvePromise.resolve();
       },
       signal,
     );
+
+    await _resolvePromise.promise;
 
     collectedSegments.sort((a, b) => a.index - b.index);
     segments.value = collectedSegments.flatMap((c) => c.data);
