@@ -1,9 +1,17 @@
 """Version history manager for compare sessions."""
 
 import json
+import re
 import time
 import uuid
 from pathlib import Path
+
+_VERSION_ID_RE = re.compile(r'^[0-9a-f]{12}$')
+
+
+def _validate_version_id(version_id: str) -> bool:
+    """Check that version_id matches the expected hex format."""
+    return bool(_VERSION_ID_RE.match(version_id))
 
 
 class VersionManager:
@@ -47,7 +55,9 @@ class VersionManager:
         return entries
 
     def restore(self, version_id: str) -> dict | None:
-        """Load full version data by id. Returns None if not found."""
+        """Load full version data by id. Returns None if not found or invalid."""
+        if not _validate_version_id(version_id):
+            return None
         path = self._dir / f"{version_id}.json"
         if not path.exists():
             return None
