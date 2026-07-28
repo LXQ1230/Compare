@@ -34,6 +34,8 @@ useKeyboardShortcuts({
     if (searchStore.isOpen) searchStore.close();
     if (isExportDialogVisible.value) isExportDialogVisible.value = false;
   },
+  onNextChange: () => { /* navigate to next change in contexts */ },
+  onPrevChange: () => { /* navigate to previous change in contexts */ },
 });
 
 compareStore.buildContexts();

@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src_backend.autosave_manager import AutosaveManager
@@ -244,3 +245,16 @@ async def version_restore(version_id: str):
             status_code=404,
         )
     return {"status": "ok", "version": entry}
+
+
+# ── SPA static mount (production mode) ────────────────────────────
+
+DIST_DIR = Path(__file__).resolve().parents[1] / "dist"
+if DIST_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(DIST_DIR), html=True), name="static")
+else:
+    # Dev mode fallback: redirect root to Vite dev server
+    @app.get("/")
+    async def root():
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="http://localhost:5173")
