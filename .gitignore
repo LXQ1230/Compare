@@ -13,3 +13,6 @@ Thumbs.db
 .idea/
 .pytest_cache/
 *.tsbuildinfo
+autosaves/
+versions/
+.coverage
