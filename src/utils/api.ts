@@ -53,16 +53,18 @@ export const api = {
           try {
             while (true) {
               const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() ?? '';
-              for (const line of lines) {
-                const t = line.trim();
-                if (t) {
-                  try { onChunk(JSON.parse(t) as StreamMessage); } catch { /* skip */ }
+              if (value) {
+                buffer += decoder.decode(value, { stream: !done });
+                const lines = buffer.split('\n');
+                buffer = done ? '' : (lines.pop() ?? '');
+                for (const line of lines) {
+                  const t = line.trim();
+                  if (t) {
+                    try { onChunk(JSON.parse(t) as StreamMessage); } catch { /* skip */ }
+                  }
                 }
               }
+              if (done) break;
             }
             const tail = buffer.trim();
             if (tail) {
