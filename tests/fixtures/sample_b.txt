@@ -1,0 +1,11 @@
+The quick brown fox jumps over the lazy dog.
+This is a test file with multiple lines.
+It contains several paragraphs of written text.
+
+This line has some DIFFERENCES between the versions.
+Here is another line that has been changed.
+And a line that stays the same in both files.
+A brand new line added in version B.
+
+The end of the file provides closure for all readers.
+Goodbye, world!
