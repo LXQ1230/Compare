@@ -1,0 +1,2 @@
+GBK test file
+Second line.
