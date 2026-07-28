@@ -1,0 +1,13 @@
+{
+  "id": "3c5525b0b803",
+  "label": "v1",
+  "time": 1785210543.524665,
+  "file_a_content": "Content A",
+  "file_b_content": "Content B",
+  "stats": {
+    "total": 5,
+    "add": 2,
+    "del": 3,
+    "mod": 0
+  }
+}

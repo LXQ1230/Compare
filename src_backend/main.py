@@ -6,10 +6,13 @@ from pathlib import Path
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
+from src_backend.autosave_manager import AutosaveManager
 from src_backend.diff_engine import diff_texts
 from src_backend.errors import AppError, Severity
 from src_backend.parsers import parse_docx, parse_md, parse_txt
+from src_backend.version_manager import VersionManager
 
 app = FastAPI(title="Compare - Document Comparison Tool")
 
@@ -24,6 +27,25 @@ app.add_middleware(
 VALID_EXTENSIONS = frozenset({".txt", ".docx", ".md"})
 CHUNK_SIZE = 50
 
+
+# ── Request schemas ───────────────────────────────────────────────
+
+class AutosaveRequest(BaseModel):
+    action: str
+    key: str
+    text: str = ""
+    html: str = ""
+    time: float = 0.0
+
+
+class VersionSaveRequest(BaseModel):
+    label: str
+    file_a_content: str
+    file_b_content: str
+    stats: dict
+
+
+# ── Helpers ───────────────────────────────────────────────────────
 
 def _get_ext(filename: str | None) -> str:
     """Extract lowercase file extension; returns '' when missing."""
@@ -154,3 +176,71 @@ async def compare(
         _build_ndjson(segments, stats),
         media_type="application/x-ndjson",
     )
+
+
+# ── Autosave ──────────────────────────────────────────────────────
+
+def _get_autosave_dir() -> str:
+    return os.environ.get("AUTOSAVE_DIR", "./autosaves")
+
+
+def _get_versions_dir() -> str:
+    return os.environ.get("VERSION_DIR", "./versions")
+
+
+@app.post("/api/autosave")
+async def autosave(req: AutosaveRequest):
+    """Save, load, or delete an autosave draft."""
+    am = AutosaveManager(storage_dir=_get_autosave_dir())
+    action = req.action
+
+    if action == "save":
+        am.save(req.key, text=req.text, html=req.html, timestamp=req.time)
+        return {"status": "ok"}
+
+    if action == "load":
+        data = am.load(req.key)
+        return {"status": "ok", "data": data}
+
+    if action == "delete":
+        am.delete(req.key)
+        return {"status": "ok"}
+
+    raise AppError(
+        Severity.BLOCKING,
+        "无效操作",
+        f"autosave 不支持 action={action}，仅支持 save/load/delete。",
+        status_code=400,
+    )
+
+
+# ── Versions ──────────────────────────────────────────────────────
+
+@app.post("/api/versions/save")
+async def version_save(req: VersionSaveRequest):
+    """Save a named version of the current compare session."""
+    vm = VersionManager(storage_dir=_get_versions_dir())
+    vid = vm.save(req.label, req.file_a_content, req.file_b_content, req.stats)
+    return {"status": "ok", "id": vid}
+
+
+@app.get("/api/versions/list")
+async def version_list():
+    """List all saved versions, newest first."""
+    vm = VersionManager(storage_dir=_get_versions_dir())
+    return {"status": "ok", "versions": vm.list()}
+
+
+@app.post("/api/versions/restore/{version_id}")
+async def version_restore(version_id: str):
+    """Restore a specific version by id."""
+    vm = VersionManager(storage_dir=_get_versions_dir())
+    entry = vm.restore(version_id)
+    if entry is None:
+        raise AppError(
+            Severity.BLOCKING,
+            "版本未找到",
+            f"版本 {version_id} 不存在或已被删除。",
+            status_code=404,
+        )
+    return {"status": "ok", "version": entry}

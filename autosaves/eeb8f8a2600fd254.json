@@ -1,0 +1,6 @@
+{
+  "key": "test-doc",
+  "text": "hello world",
+  "html": "<p>hello world</p>",
+  "time": 12345.0
+}
