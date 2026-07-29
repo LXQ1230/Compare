@@ -167,7 +167,20 @@ export const useCompareStore = defineStore('compare', () => {
         lineB += newlines;
       }
 
-      result.push({ index: ci, total: stats.value.total, type, lineA: posA, lineB: posB, highlight: s.text });
+      // Capture surrounding text for context display
+      const before = segments.value.slice(Math.max(0, i - 2), i).map((x) => x.text).join('').slice(-40);
+      const after = segments.value.slice(i + 1, i + 3).map((x) => x.text).join('').slice(0, 40);
+
+      result.push({
+        index: ci,
+        total: stats.value.total,
+        type,
+        lineA: posA,
+        lineB: posB,
+        before,
+        highlight: s.text,
+        after,
+      });
     }
 
     contexts.value = result;

@@ -5,16 +5,11 @@ import { useViewStore } from '../../stores/view';
 const compareStore = useCompareStore();
 const viewStore = useViewStore();
 
-/**
- * 根据变更类型获取位置标签
- * + 新增 → 显示"修改第 N 行"（仅存在于修改后文件）
- * - 删除 → 显示"原始第 N 行"（仅存在于原始文件）
- * ~ 修改 → 显示"原始第 N 行"（指向原始文件中的变更位置）
- */
-function locationLabel(ctx: { type: string; lineA: number; lineB: number }): string {
-  if (ctx.type === 'add') return `修改第 ${ctx.lineB} 行`;
-  if (ctx.type === 'del') return `原始第 ${ctx.lineA} 行`;
-  return `原始第 ${ctx.lineA} 行`;
+/** 增/删/改 中文标签 */
+function typeLabel(type: string): string {
+  if (type === 'add') return '新增';
+  if (type === 'del') return '删除';
+  return '修改';
 }
 
 function scrollTo(ci: number) {
@@ -69,10 +64,21 @@ function scrollTo(ci: number) {
           class="change-item" :class="`change-${ctx.type}`"
           @click="scrollTo(ctx.index)"
         >
-          <span class="change-type">{{ ctx.type === 'add' ? '+' : ctx.type === 'del' ? '-' : '~' }}</span>
+          <!-- Type badge -->
+          <span class="change-badge">{{ typeLabel(ctx.type) }}</span>
+          <!-- Context snippet -->
           <div class="change-body">
-            <span class="change-location">{{ locationLabel(ctx) }}</span>
-            <span class="change-text">{{ ctx.highlight.slice(0, 50) }}{{ ctx.highlight.length > 50 ? '…' : '' }}</span>
+            <div class="change-context-line">
+              <span class="ctx-fragment ctx-before">{{ ctx.before || '···' }}</span>
+              <span class="ctx-fragment ctx-highlight">{{ ctx.highlight.slice(0, 60) }}{{ ctx.highlight.length > 60 ? '…' : '' }}</span>
+              <span class="ctx-fragment ctx-after">{{ ctx.after || '···' }}</span>
+            </div>
+            <!-- Location line -->
+            <div class="change-location">
+              <template v-if="ctx.type === 'add'">修改第 {{ ctx.lineB }} 行</template>
+              <template v-else-if="ctx.type === 'del'">原始第 {{ ctx.lineA }} 行</template>
+              <template v-else>原始 {{ ctx.lineA }} 行 → 修改 {{ ctx.lineB }} 行</template>
+            </div>
           </div>
         </div>
       </div>
@@ -82,7 +88,7 @@ function scrollTo(ci: number) {
 
 <style scoped>
 .sidebar {
-  width: 280px; border-right: 1px solid var(--color-border); display: flex;
+  width: 300px; border-right: 1px solid var(--color-border); display: flex;
   flex-shrink: 0; position: relative; background: var(--color-bg-secondary);
 }
 .sidebar.collapsed { width: 24px; }
@@ -110,15 +116,38 @@ function scrollTo(ci: number) {
 /* Change list */
 .change-list { max-height: calc(100vh - 320px); overflow-y: auto; }
 .change-item {
-  display: flex; gap: 6px; padding: 6px 4px; font-size: 12px;
+  display: flex; gap: 6px; padding: 8px 4px; font-size: 12px;
   border-bottom: 1px solid var(--color-border); cursor: pointer; border-radius: 4px;
   transition: background 0.15s;
 }
 .change-item:hover { background: var(--color-bg-hover); }
-.change-type { font-weight: 700; width: 16px; flex-shrink: 0; padding-top: 1px; }
-.change-add .change-type { color: var(--color-add-text); }
-.change-del .change-type { color: var(--color-del-text); }
-.change-mod .change-type { color: var(--color-mod-old-text); }
-.change-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: var(--color-text); }
+
+/* Type badge */
+.change-badge {
+  flex-shrink: 0; width: 36px; height: 20px; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; border-radius: 4px;
+  color: #fff; line-height: 1; margin-top: 1px;
+}
+.change-add .change-badge { background: var(--color-add-text); }
+.change-del .change-badge { background: var(--color-del-text); }
+.change-mod .change-badge { background: var(--color-mod-old-text); }
+
+.change-body { flex: 1; min-width: 0; overflow: hidden; }
+
+/* Context line — before (dim) + highlight (bold) + after (dim) */
+.change-context-line {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ctx-fragment { display: inline; }
+.ctx-before { color: var(--color-text-secondary); }
+.ctx-highlight { color: var(--color-text); font-weight: 700; }
+.ctx-after { color: var(--color-text-secondary); }
+
+/* Location line */
+.change-location {
+  font-size: 10px; color: var(--color-focus-border); margin-top: 2px; font-weight: 500;
+}
+
 .empty-hint { font-size: 12px; color: var(--color-text-secondary); }
 </style>

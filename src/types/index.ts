@@ -23,7 +23,12 @@ export interface ChangeContext {
   type: 'add' | 'del' | 'mod'
   lineA: number
   lineB: number
+  /** 变更位置前的文本片段（用于上下文展示） */
+  before: string
+  /** 变更文本本身 */
   highlight: string
+  /** 变更位置后的文本片段（用于上下文展示） */
+  after: string
 }
 
 export interface CompareMeta {
