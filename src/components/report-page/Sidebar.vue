@@ -12,6 +12,12 @@ function typeLabel(type: string): string {
   return '修改';
 }
 
+function locationLabel(ctx: { type: string; lineA: number; lineB: number }): string {
+  if (ctx.type === 'add') return `修改第 ${ctx.lineB} 行`;
+  if (ctx.type === 'del') return `原始第 ${ctx.lineA} 行`;
+  return `原始第 ${ctx.lineA} 行`;
+}
+
 function scrollTo(ci: number) {
   const el = document.getElementById(`ci-${ci}`);
   if (el) {
@@ -74,11 +80,7 @@ function scrollTo(ci: number) {
               <span class="ctx-fragment ctx-after">{{ ctx.after || '···' }}</span>
             </div>
             <!-- Location line -->
-            <div class="change-location">
-              <template v-if="ctx.type === 'add'">修改第 {{ ctx.lineB }} 行</template>
-              <template v-else-if="ctx.type === 'del'">原始第 {{ ctx.lineA }} 行</template>
-              <template v-else>原始 {{ ctx.lineA }} 行 → 修改 {{ ctx.lineB }} 行</template>
-            </div>
+            <span class="loc-label">{{ locationLabel(ctx) }}</span>
           </div>
         </div>
       </div>
@@ -145,8 +147,8 @@ function scrollTo(ci: number) {
 .ctx-after { color: var(--color-text-secondary); }
 
 /* Location line */
-.change-location {
-  font-size: 10px; color: var(--color-focus-border); margin-top: 2px; font-weight: 500;
+.loc-label {
+  font-size: 10px; color: var(--color-focus-border); font-weight: 500;
 }
 
 .empty-hint { font-size: 12px; color: var(--color-text-secondary); }
