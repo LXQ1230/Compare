@@ -12,22 +12,34 @@ const fileB = ref<File | null>(null);
 const error = ref('');
 const isStarting = ref(false);
 
+const inputA = ref<HTMLInputElement | null>(null);
+const inputB = ref<HTMLInputElement | null>(null);
+
 function handleFiles(files: File[]) {
   error.value = '';
   if (files.length >= 1) fileA.value = files[0];
   if (files.length >= 2) fileB.value = files[1];
 }
 
+function handleFileAChange(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (input.files?.[0]) fileA.value = input.files[0];
+  error.value = '';
+}
+
+function handleFileBChange(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (input.files?.[0]) fileB.value = input.files[0];
+  error.value = '';
+}
+
+function openFileA() { inputA.value?.click(); }
+function openFileB() { inputB.value?.click(); }
+
 function swapFiles() {
   const tmp = fileA.value;
   fileA.value = fileB.value;
   fileB.value = tmp;
-}
-
-function clearFiles() {
-  fileA.value = null;
-  fileB.value = null;
-  error.value = '';
 }
 
 async function startCompare() {
@@ -54,17 +66,27 @@ async function startCompare() {
 
     <DropZone @files="handleFiles" />
 
+    <!-- Hidden individual file inputs -->
+    <input ref="inputA" type="file" accept=".txt,.docx,.md" class="hidden-input" @change="handleFileAChange" />
+    <input ref="inputB" type="file" accept=".txt,.docx,.md" class="hidden-input" @change="handleFileBChange" />
+
     <div v-if="fileA || fileB" class="file-cards">
       <div class="file-card" :class="{ filled: fileA }">
         <span class="card-label">文件 A（原始）</span>
         <span class="card-name">{{ fileA?.name ?? '未选择' }}</span>
-        <button v-if="fileA" class="card-remove" @click="fileA = null">×</button>
+        <div class="card-actions">
+          <button class="card-pick-btn" @click="openFileA">{{ fileA ? '更换文件' : '选择文件 A' }}</button>
+          <button v-if="fileA" class="card-remove" @click="fileA = null">×</button>
+        </div>
       </div>
       <button class="swap-btn" title="交换文件" @click="swapFiles" :disabled="!fileA || !fileB">⇄</button>
       <div class="file-card" :class="{ filled: fileB }">
         <span class="card-label">文件 B（修改）</span>
         <span class="card-name">{{ fileB?.name ?? '未选择' }}</span>
-        <button v-if="fileB" class="card-remove" @click="fileB = null">×</button>
+        <div class="card-actions">
+          <button class="card-pick-btn" @click="openFileB">{{ fileB ? '更换文件' : '选择文件 B' }}</button>
+          <button v-if="fileB" class="card-remove" @click="fileB = null">×</button>
+        </div>
       </div>
     </div>
 
@@ -89,14 +111,20 @@ async function startCompare() {
 .file-card {
   display: flex; flex-direction: column; gap: 4px;
   padding: 12px 16px; border: 2px dashed var(--color-border);
-  border-radius: 8px; min-width: 200px; background: var(--color-bg-secondary);
+  border-radius: 8px; min-width: 220px; background: var(--color-bg-secondary);
 }
 .file-card.filled { border-color: var(--color-focus-border); background: var(--color-focus-bg); }
 .card-label { font-size: 12px; color: var(--color-text-secondary); }
 .card-name { font-size: 14px; font-weight: 600; word-break: break-all; }
+.card-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.card-pick-btn {
+  font-size: 12px; padding: 2px 8px; background: var(--color-bg); color: var(--color-focus-border);
+  border: 1px solid var(--color-focus-border); border-radius: 4px; cursor: pointer;
+}
+.card-pick-btn:hover { background: var(--color-focus-bg); }
 .card-remove {
   background: none; border: none; cursor: pointer; font-size: 18px;
-  color: var(--color-danger); padding: 0 4px; align-self: flex-end; margin-top: -8px;
+  color: var(--color-danger); padding: 0 4px; margin-left: auto;
 }
 .swap-btn {
   font-size: 24px; background: none; border: 1px solid var(--color-border);
@@ -112,4 +140,5 @@ async function startCompare() {
 }
 .start-btn:disabled { opacity: 0.4; cursor: default; }
 .hint { color: var(--color-text-secondary); font-size: 14px; margin-top: 8px; }
+.hidden-input { display: none; }
 </style>

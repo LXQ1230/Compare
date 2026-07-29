@@ -40,53 +40,66 @@ export const useCompareStore = defineStore('compare', () => {
     const collectedSegments: { index: number; data: Segment[] }[] = [];
     let receivedMeta: CompareMeta | null = null;
 
-    const _resolvePromise = Promise.withResolvers<void>();
+    const streamDone = Promise.withResolvers<void>();
 
-    api.compareFiles(
-      fileA,
-      fileB,
-      (msg: StreamMessage) => {
-        switch (msg.type) {
-          case 'phase':
-            currentPhase.value = msg.stage;
-            progress.value = msg.progress;
-            break;
-          case 'meta': {
-            receivedMeta = {
-              fileA: fileA.name,
-              fileB: fileB.name,
-              stats: msg.stats,
-              timestamp: Date.now(),
-              totalChunks: msg.totalChunks,
-            };
-            break;
+    try {
+      await api.compareFiles(
+        fileA,
+        fileB,
+        (msg: StreamMessage) => {
+          switch (msg.type) {
+            case 'phase':
+              currentPhase.value = msg.stage;
+              progress.value = msg.progress;
+              break;
+            case 'meta': {
+              receivedMeta = {
+                fileA: fileA.name,
+                fileB: fileB.name,
+                stats: msg.stats,
+                timestamp: Date.now(),
+                totalChunks: msg.totalChunks,
+              };
+              break;
+            }
+            case 'segments':
+              collectedSegments.push({ index: msg.index, data: msg.data as Segment[] });
+              break;
+            case 'done':
+              streamDone.resolve();
+              break;
           }
-          case 'segments':
-            collectedSegments.push({ index: msg.index, data: msg.data as Segment[] });
-            break;
-          case 'done':
-            _resolvePromise.resolve();
-            break;
-        }
-      },
-      (err: ErrorEnvelope | Error) => {
-        if (err instanceof Error) {
-          error.value = {
-            error: true,
-            severity: 'blocking',
-            title: '连接错误',
-            message: err.message,
-            detail: null,
-          };
-        } else {
-          error.value = err;
-        }
-        _resolvePromise.resolve();
-      },
-      signal,
-    );
+        },
+        (err: ErrorEnvelope | Error) => {
+          if (err instanceof Error) {
+            error.value = {
+              error: true,
+              severity: 'blocking',
+              title: '连接错误',
+              message: err.message,
+              detail: null,
+            };
+          } else {
+            error.value = err;
+          }
+          streamDone.resolve();
+        },
+        signal,
+      );
+    } catch (e: unknown) {
+      // fetch-level failure (network error, DNS, etc.)
+      error.value = {
+        error: true,
+        severity: 'blocking',
+        title: '网络错误',
+        message: e instanceof Error ? e.message : '无法连接到服务，请确认后端已启动。',
+        detail: null,
+      };
+      isComparing.value = false;
+      return;
+    }
 
-    await _resolvePromise.promise;
+    await streamDone.promise;
 
     collectedSegments.sort((a, b) => a.index - b.index);
     segments.value = collectedSegments.flatMap((c) => c.data);
