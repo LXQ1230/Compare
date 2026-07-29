@@ -6,8 +6,17 @@ const compareStore = useCompareStore();
 const viewStore = useViewStore();
 
 /**
- * Scroll the main view to a change and briefly flash it.
+ * 根据变更类型获取位置标签
+ * + 新增 → 显示"修改第 N 行"（仅存在于修改后文件）
+ * - 删除 → 显示"原始第 N 行"（仅存在于原始文件）
+ * ~ 修改 → 显示"原始第 N 行"（指向原始文件中的变更位置）
  */
+function locationLabel(ctx: { type: string; lineA: number; lineB: number }): string {
+  if (ctx.type === 'add') return `修改第 ${ctx.lineB} 行`;
+  if (ctx.type === 'del') return `原始第 ${ctx.lineA} 行`;
+  return `原始第 ${ctx.lineA} 行`;
+}
+
 function scrollTo(ci: number) {
   const el = document.getElementById(`ci-${ci}`);
   if (el) {
@@ -62,12 +71,7 @@ function scrollTo(ci: number) {
         >
           <span class="change-type">{{ ctx.type === 'add' ? '+' : ctx.type === 'del' ? '-' : '~' }}</span>
           <div class="change-body">
-            <span class="change-location">
-              <!-- add: only in modified file -->  <!-- del: only in original file -->  <!-- mod: both -->
-              <template v-if="ctx.type === 'add'">修改第 {{ ctx.lineB }} 行</template>
-              <template v-else-if="ctx.type === 'del'">原始第 {{ ctx.lineA }} 行</template>
-              <template v-else>原始第 {{ ctx.lineA }} 行 → 修改第 {{ ctx.lineB }} 行</template>
-            </span>
+            <span class="change-location">{{ locationLabel(ctx) }}</span>
             <span class="change-text">{{ ctx.highlight.slice(0, 50) }}{{ ctx.highlight.length > 50 ? '…' : '' }}</span>
           </div>
         </div>
