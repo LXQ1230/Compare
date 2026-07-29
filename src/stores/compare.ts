@@ -145,7 +145,6 @@ export const useCompareStore = defineStore('compare', () => {
     for (let i = 0; i < segments.value.length; i++) {
       const s = segments.value[i];
       if (s.operation === 'none') {
-        // Advance both line counters equally through unchanged text
         const newlines = (s.text.match(/\n/g) || []).length;
         lineA += newlines;
         lineB += newlines;
@@ -155,16 +154,19 @@ export const useCompareStore = defineStore('compare', () => {
       ci++;
       const type = s.operation === 'add' ? 'add' : s.operation === 'del' ? 'del' : 'mod';
 
-      // Record position BEFORE advancing — this is where the change occurs
       const posA = lineA;
       const posB = lineB;
 
-      // Advance line counters according to operation type
       const newlines = (s.text.match(/\n/g) || []).length;
-      if (s.operation === 'del' || (s.operation === 'mod' && s.side === 'old')) {
-        lineA += newlines;
-      } else if (s.operation === 'add' || (s.operation === 'mod' && s.side === 'new')) {
+      if (s.operation === 'add') {
         lineB += newlines;
+      } else if (s.operation === 'del') {
+        lineA += newlines;
+      } else {
+        // mod — has old+new pair; advance both sides by the newlines in the "old" side for file A,
+        // and by the newlines in the "new" side for file B.
+        if (s.side === 'old') lineA += newlines;
+        if (s.side === 'new') lineB += newlines;
       }
 
       // Capture surrounding text for context display
