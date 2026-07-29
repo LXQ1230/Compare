@@ -8,10 +8,16 @@ import type { ErrorEnvelope, StreamMessage } from '@/types';
 
 const BASE = '/api';
 
+/** Maximum time (ms) to wait for the compare request before timing out. */
+const COMPARE_TIMEOUT_MS = 60_000;
+
 export const api = {
   async checkHealth(): Promise<boolean> {
     try {
-      const res = await fetch(`${BASE}/health`);
+      const ctrl = new AbortController();
+      const id = setTimeout(() => ctrl.abort(), 5_000);
+      const res = await fetch(`${BASE}/health`, { signal: ctrl.signal });
+      clearTimeout(id);
       return res.ok;
     } catch {
       return false;
@@ -30,18 +36,34 @@ export const api = {
       form.append('fileA', fileA);
       form.append('fileB', fileB);
 
-      fetch(`${BASE}/compare`, { method: 'POST', body: form, signal })
+      // Compose external signal with our own safeguard timeout
+      const ctrl = new AbortController();
+      const timeoutId = setTimeout(() => ctrl.abort(), COMPARE_TIMEOUT_MS);
+
+      const onAbort = () => ctrl.abort();
+      signal?.addEventListener('abort', onAbort, { once: true });
+
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        signal?.removeEventListener('abort', onAbort);
+      };
+
+      fetch(`${BASE}/compare`, {
+        method: 'POST',
+        body: form,
+        signal: ctrl.signal,
+      })
         .then(async (response) => {
+          cleanup();
+
           if (!response.ok) {
             try {
               onError((await response.json()) as ErrorEnvelope);
-              resolve();
-              return;
             } catch {
               onError(new Error(`HTTP ${response.status}`));
-              resolve();
-              return;
             }
+            resolve();
+            return;
           }
 
           const reader = response.body?.getReader();
@@ -71,13 +93,20 @@ export const api = {
               try { onChunk(JSON.parse(tail) as StreamMessage); } catch { /* skip */ }
             }
           } catch (e: unknown) {
-            if (e instanceof DOMException && e.name === 'AbortError') { resolve(); return; }
+            if (e instanceof DOMException && e.name === 'AbortError') {
+              resolve();
+              return;
+            }
             onError(e instanceof Error ? e : new Error(String(e)));
           }
           resolve();
         })
         .catch((e: unknown) => {
-          if (e instanceof DOMException && e.name === 'AbortError') { resolve(); return; }
+          cleanup();
+          if (e instanceof DOMException && e.name === 'AbortError') {
+            resolve();
+            return;
+          }
           reject(e);
         });
     });

@@ -37,10 +37,23 @@ export const useCompareStore = defineStore('compare', () => {
     reset();
     isComparing.value = true;
 
+    // Pre-check: verify the backend is reachable before posting large payloads
+    const healthy = await api.checkHealth();
+    if (!healthy) {
+      error.value = {
+        error: true,
+        severity: 'blocking',
+        title: '后端未启动',
+        message: '无法连接到后端服务。请先运行 "python -m uvicorn src_backend.main:app --host 127.0.0.1 --port 17890" 或执行 start.bat。',
+        detail: null,
+      };
+      isComparing.value = false;
+      return;
+    }
+
     const collectedSegments: { index: number; data: Segment[] }[] = [];
     let receivedMeta: CompareMeta | null = null;
-
-    const streamDone = Promise.withResolvers<void>();
+    let streamError: boolean = false;
 
     try {
       await api.compareFiles(
@@ -66,11 +79,11 @@ export const useCompareStore = defineStore('compare', () => {
               collectedSegments.push({ index: msg.index, data: msg.data as Segment[] });
               break;
             case 'done':
-              streamDone.resolve();
               break;
           }
         },
         (err: ErrorEnvelope | Error) => {
+          streamError = true;
           if (err instanceof Error) {
             error.value = {
               error: true,
@@ -82,24 +95,26 @@ export const useCompareStore = defineStore('compare', () => {
           } else {
             error.value = err;
           }
-          streamDone.resolve();
         },
         signal,
       );
     } catch (e: unknown) {
-      // fetch-level failure (network error, DNS, etc.)
       error.value = {
         error: true,
         severity: 'blocking',
         title: '网络错误',
-        message: e instanceof Error ? e.message : '无法连接到服务，请确认后端已启动。',
+        message: e instanceof Error ? e.message : '请求超时或无法连接到服务。',
         detail: null,
       };
       isComparing.value = false;
       return;
     }
 
-    await streamDone.promise;
+    // If the callback reported an error, bail out — don't navigate to report page
+    if (streamError && !segments.value.length) {
+      isComparing.value = false;
+      return;
+    }
 
     collectedSegments.sort((a, b) => a.index - b.index);
     segments.value = collectedSegments.flatMap((c) => c.data);
