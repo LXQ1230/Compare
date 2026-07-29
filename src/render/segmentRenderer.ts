@@ -1,6 +1,9 @@
 /**
  * Renders diff segments to HTML with CSS classes for each operation type.
  * All user content is HTML-escaped before insertion.
+ *
+ * Each non-"none" segment with a change index wraps in a <mark> with
+ * data-ci and id so the sidebar change-list can scroll to it directly.
  */
 
 import type { Segment } from '@/types';
@@ -24,7 +27,13 @@ function segmentClass(s: Segment): string {
 export function renderSegmentsToHTML(segments: Segment[]): string {
   const parts: string[] = [];
   for (const s of segments) {
-    parts.push(`<span class="${segmentClass(s)}">${esc(s.text)}</span>`);
+    if (s.operation === 'none' || s.ci == null) {
+      parts.push(`<span class="${segmentClass(s)}">${esc(s.text)}</span>`);
+    } else {
+      parts.push(
+        `<mark class="${segmentClass(s)}" data-ci="${s.ci}" id="ci-${s.ci}">${esc(s.text)}</mark>`,
+      );
+    }
   }
   return parts.join('');
 }
