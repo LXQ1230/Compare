@@ -33,18 +33,25 @@ export const useCompareStore = defineStore('compare', () => {
     progress.value = 0;
   }
 
+  /**
+   * Start a comparison between two files.
+   *
+   * The api.compareFiles() call is guaranteed to resolve within ~2 minutes
+   * (backed by AbortSignal.timeout inside the browser network stack).  No
+   * additional Promise bookkeeping is needed — we just await it.
+   */
   async function startCompare(fileA: File, fileB: File, signal?: AbortSignal): Promise<void> {
     reset();
     isComparing.value = true;
 
-    // Pre-check: verify the backend is reachable before posting large payloads
+    // Quick pre-flight: is the backend reachable?
     const healthy = await api.checkHealth();
     if (!healthy) {
       error.value = {
         error: true,
         severity: 'blocking',
         title: '后端未启动',
-        message: '无法连接到后端服务。请先运行 "python -m uvicorn src_backend.main:app --host 127.0.0.1 --port 17890" 或执行 start.bat。',
+        message: '无法连接到后端服务。请先启动后端： python -m uvicorn src_backend.main:app --host 127.0.0.1 --port 17890',
         detail: null,
       };
       isComparing.value = false;
@@ -53,69 +60,61 @@ export const useCompareStore = defineStore('compare', () => {
 
     const collectedSegments: { index: number; data: Segment[] }[] = [];
     let receivedMeta: CompareMeta | null = null;
-    let streamError: boolean = false;
+    let streamError: ErrorEnvelope | null = null;
 
-    try {
-      await api.compareFiles(
-        fileA,
-        fileB,
-        (msg: StreamMessage) => {
-          switch (msg.type) {
-            case 'phase':
-              currentPhase.value = msg.stage;
-              progress.value = msg.progress;
-              break;
-            case 'meta': {
-              receivedMeta = {
-                fileA: fileA.name,
-                fileB: fileB.name,
-                stats: msg.stats,
-                timestamp: Date.now(),
-                totalChunks: msg.totalChunks,
-              };
-              break;
-            }
-            case 'segments':
-              collectedSegments.push({ index: msg.index, data: msg.data as Segment[] });
-              break;
-            case 'done':
-              break;
-          }
-        },
-        (err: ErrorEnvelope | Error) => {
-          streamError = true;
-          if (err instanceof Error) {
-            error.value = {
-              error: true,
-              severity: 'blocking',
-              title: '连接错误',
-              message: err.message,
-              detail: null,
+    // This single await covers the ENTIRE lifecycle — upload, streaming,
+    // and any error/timeout.  It always returns; it never hangs.
+    await api.compareFiles(
+      fileA,
+      fileB,
+      /* onChunk */
+      (msg: StreamMessage) => {
+        switch (msg.type) {
+          case 'phase':
+            currentPhase.value = msg.stage;
+            progress.value = msg.progress;
+            break;
+          case 'meta':
+            receivedMeta = {
+              fileA: fileA.name,
+              fileB: fileB.name,
+              stats: msg.stats,
+              timestamp: Date.now(),
+              totalChunks: msg.totalChunks,
             };
-          } else {
-            error.value = err;
-          }
-        },
-        signal,
-      );
-    } catch (e: unknown) {
-      error.value = {
-        error: true,
-        severity: 'blocking',
-        title: '网络错误',
-        message: e instanceof Error ? e.message : '请求超时或无法连接到服务。',
-        detail: null,
-      };
-      isComparing.value = false;
-      return;
+            break;
+          case 'segments':
+            collectedSegments.push({ index: msg.index, data: msg.data as Segment[] });
+            break;
+          /* 'done' is just consumed; no special handling needed */
+        }
+      },
+      /* onError */
+      (err: ErrorEnvelope | Error) => {
+        if (err instanceof Error) {
+          streamError = {
+            error: true,
+            severity: 'blocking',
+            title: '传输错误',
+            message: err.message,
+            detail: null,
+          };
+        } else {
+          streamError = err;
+        }
+      },
+      signal,
+    );
+
+    isComparing.value = false;
+
+    // If we have an error AND no data, report it and stay on the select page.
+    if (streamError) {
+      error.value = streamError;
+      if (collectedSegments.length === 0) return;
     }
 
-    // If the callback reported an error, bail out — don't navigate to report page
-    if (streamError && !segments.value.length) {
-      isComparing.value = false;
-      return;
-    }
-
+    // Assemble results.
     collectedSegments.sort((a, b) => a.index - b.index);
     segments.value = collectedSegments.flatMap((c) => c.data);
 
@@ -123,9 +122,9 @@ export const useCompareStore = defineStore('compare', () => {
       meta.value = receivedMeta;
     }
 
-    isComplete.value = true;
-    isComparing.value = false;
+    isComplete.value = !streamError;
 
+    // Persist to local storage (fire-and-forget — best-effort).
     if (segments.value.length > 0 && receivedMeta) {
       storage.saveMeta(receivedMeta);
       const chunks = collectedSegments.map((c) => ({
@@ -133,7 +132,7 @@ export const useCompareStore = defineStore('compare', () => {
         index: c.index,
         data: c.data,
       }));
-      await storage.saveSegments(chunks);
+      storage.saveSegments(chunks).catch(() => { /* best-effort */ });
     }
   }
 
@@ -156,5 +155,10 @@ export const useCompareStore = defineStore('compare', () => {
     contexts.value = result;
   }
 
-  return { segments, contexts, meta, error, isComparing, isComplete, currentPhase, progress, stats, fileAName, fileBName, reset, startCompare, buildContexts };
+  return {
+    segments, contexts, meta, error,
+    isComparing, isComplete, currentPhase, progress,
+    stats, fileAName, fileBName,
+    reset, startCompare, buildContexts,
+  };
 });
