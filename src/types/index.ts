@@ -21,9 +21,7 @@ export interface ChangeContext {
   index: number
   total: number
   type: 'add' | 'del' | 'mod'
-  before: string
   highlight: string
-  after: string
 }
 
 export interface CompareMeta {

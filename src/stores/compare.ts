@@ -146,10 +146,7 @@ export const useCompareStore = defineStore('compare', () => {
 
       ci++;
       const type = s.operation === 'add' ? 'add' : s.operation === 'del' ? 'del' : 'mod';
-      const before = segments.value.slice(Math.max(0, i - 1), i).map((x) => x.text).join('');
-      const after = segments.value.slice(i + 1, i + 2).map((x) => x.text).join('');
-
-      result.push({ index: ci, total: stats.value.total, type, before, highlight: s.text, after });
+      result.push({ index: ci, total: stats.value.total, type, highlight: s.text });
     }
 
     contexts.value = result;

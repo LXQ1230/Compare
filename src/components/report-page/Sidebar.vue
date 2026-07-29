@@ -51,7 +51,7 @@ function scrollTo(ci: number) {
         </div>
       </div>
 
-      <!-- Change list — clickable, shows position context -->
+      <!-- Change list -->
       <div class="change-list">
         <h4 class="section-title">变更列表 ({{ Math.min(compareStore.contexts.length, 50) }}/{{ compareStore.contexts.length }})</h4>
         <div v-if="compareStore.contexts.length === 0" class="empty-hint">暂无变更</div>
@@ -61,13 +61,7 @@ function scrollTo(ci: number) {
           @click="scrollTo(ctx.index)"
         >
           <span class="change-type">{{ ctx.type === 'add' ? '+' : ctx.type === 'del' ? '-' : '~' }}</span>
-          <div class="change-body">
-            <div class="change-highlight">{{ ctx.highlight.slice(0, 50) }}{{ ctx.highlight.length > 50 ? '…' : '' }}</div>
-            <div class="change-context">
-              <span class="ctx-label">前：</span>{{ (ctx.before || '(文件开头)').slice(-30) }}
-              <span class="ctx-label"> &nbsp;后：</span>{{ (ctx.after || '(文件结尾)').slice(0, 30) }}
-            </div>
-          </div>
+          <span class="change-text">{{ ctx.highlight.slice(0, 50) }}{{ ctx.highlight.length > 50 ? '…' : '' }}</span>
         </div>
       </div>
     </div>
@@ -113,12 +107,6 @@ function scrollTo(ci: number) {
 .change-add .change-type { color: var(--color-add-text); }
 .change-del .change-type { color: var(--color-del-text); }
 .change-mod .change-type { color: var(--color-mod-old-text); }
-.change-body { flex: 1; min-width: 0; }
-.change-highlight { font-family: var(--font-mono); font-size: 12px; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.change-context {
-  font-size: 10px; color: var(--color-text-secondary); margin-top: 2px;
-  line-height: 1.3; word-break: break-all;
-}
-.ctx-label { color: var(--color-focus-border); font-weight: 600; }
+.change-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: var(--color-text); }
 .empty-hint { font-size: 12px; color: var(--color-text-secondary); }
 </style>
