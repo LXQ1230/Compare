@@ -21,6 +21,8 @@ export interface ChangeContext {
   index: number
   total: number
   type: 'add' | 'del' | 'mod'
+  lineA: number
+  lineB: number
   highlight: string
 }
 

@@ -139,14 +139,35 @@ export const useCompareStore = defineStore('compare', () => {
   function buildContexts(): void {
     const result: ChangeContext[] = [];
     let ci = 0;
+    let lineA = 1;
+    let lineB = 1;
 
     for (let i = 0; i < segments.value.length; i++) {
       const s = segments.value[i];
-      if (s.operation === 'none') continue;
+      if (s.operation === 'none') {
+        // Advance both line counters equally through unchanged text
+        const newlines = (s.text.match(/\n/g) || []).length;
+        lineA += newlines;
+        lineB += newlines;
+        continue;
+      }
 
       ci++;
       const type = s.operation === 'add' ? 'add' : s.operation === 'del' ? 'del' : 'mod';
-      result.push({ index: ci, total: stats.value.total, type, highlight: s.text });
+
+      // Record position BEFORE advancing — this is where the change occurs
+      const posA = lineA;
+      const posB = lineB;
+
+      // Advance line counters according to operation type
+      const newlines = (s.text.match(/\n/g) || []).length;
+      if (s.operation === 'del' || (s.operation === 'mod' && s.side === 'old')) {
+        lineA += newlines;
+      } else if (s.operation === 'add' || (s.operation === 'mod' && s.side === 'new')) {
+        lineB += newlines;
+      }
+
+      result.push({ index: ci, total: stats.value.total, type, lineA: posA, lineB: posB, highlight: s.text });
     }
 
     contexts.value = result;

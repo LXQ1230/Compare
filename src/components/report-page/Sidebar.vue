@@ -61,7 +61,15 @@ function scrollTo(ci: number) {
           @click="scrollTo(ctx.index)"
         >
           <span class="change-type">{{ ctx.type === 'add' ? '+' : ctx.type === 'del' ? '-' : '~' }}</span>
-          <span class="change-text">{{ ctx.highlight.slice(0, 50) }}{{ ctx.highlight.length > 50 ? '…' : '' }}</span>
+          <div class="change-body">
+            <span class="change-location">
+              <!-- add: only in modified file -->  <!-- del: only in original file -->  <!-- mod: both -->
+              <template v-if="ctx.type === 'add'">修改第 {{ ctx.lineB }} 行</template>
+              <template v-else-if="ctx.type === 'del'">原始第 {{ ctx.lineA }} 行</template>
+              <template v-else>原始第 {{ ctx.lineA }} 行 → 修改第 {{ ctx.lineB }} 行</template>
+            </span>
+            <span class="change-text">{{ ctx.highlight.slice(0, 50) }}{{ ctx.highlight.length > 50 ? '…' : '' }}</span>
+          </div>
         </div>
       </div>
     </div>
