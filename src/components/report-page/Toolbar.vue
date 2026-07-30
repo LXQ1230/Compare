@@ -9,6 +9,14 @@ const viewStore = useViewStore();
 const editorStore = useEditorStore();
 const searchStore = useSearchStore();
 
+function handleEditToggle(): void {
+  if (editorStore.isEditing) {
+    editorStore.exitEdit();
+  } else {
+    editorStore.enterEdit();
+  }
+}
+
 defineEmits<{ export: [] }>();
 </script>
 
@@ -27,7 +35,11 @@ defineEmits<{ export: [] }>();
       <button class="tb-btn" @click="viewStore.toggleView()" title="切换视图">
         {{ viewStore.viewMode === 'unified' ? '⇶ 分栏' : '≡ 统一' }}
       </button>
-      <button class="tb-btn" @click="editorStore.enterEdit()" title="编辑模式 (Ctrl+E)">✏️ 编辑</button>
+      <button
+        class="tb-btn edit-btn" :class="{ active: editorStore.isEditing }"
+        @click="handleEditToggle"
+        title="编辑模式 (Ctrl+E)"
+      >✏️ {{ editorStore.isEditing ? '退出编辑' : '编辑' }}</button>
       <button class="tb-btn" @click="$emit('export')" title="导出">📥 导出</button>
     </div>
   </div>
@@ -51,4 +63,9 @@ defineEmits<{ export: [] }>();
   border-radius: 6px; background: var(--color-bg); cursor: pointer;
 }
 .tb-btn:hover { background: var(--color-bg-hover); }
+.edit-btn.active {
+  background: var(--color-user-add-bg);
+  border-color: var(--color-user-add-text);
+  color: var(--color-user-add-text);
+}
 </style>

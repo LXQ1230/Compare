@@ -124,12 +124,12 @@ describe('exporters', () => {
     expect(exportToTXT(segments)).toBe('normal added deleted changed');
   });
 
-  it('exportToHTML contains DOCTYPE and markup', () => {
+  it('exportToHTML contains DOCTYPE and diff classes', () => {
     const html = exportToHTML(segments);
     expect(html).toContain('<!DOCTYPE html>');
-    expect(html).toContain('<ins>');
-    expect(html).toContain('<del>');
-    expect(html).toContain('<mark>');
+    expect(html).toContain('seg-add');
+    expect(html).toContain('seg-del');
+    expect(html).toContain('seg-mod-new');
   });
 
   it('exportToMD uses markdown notation', () => {
