@@ -11,11 +11,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "diff-match-patch": "^1.0.5",
     "pinia": "^2.3.1",
     "vue": "^3.5.40",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@types/diff-match-patch": "^1.0.36",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.4.11",
     "jsdom": "^30.0.0",

@@ -20,3 +20,64 @@ html, body {
 #app {
   height: 100%;
 }
+
+/* ── Diff segment global styles (rendered via v-html) ── */
+.seg-add {
+  background: var(--color-add-bg);
+  color: var(--color-add-text);
+}
+
+.seg-del {
+  background: var(--color-del-bg);
+  color: var(--color-del-text);
+  text-decoration: line-through;
+}
+
+.seg-mod-old {
+  background: var(--color-mod-old-bg);
+  color: var(--color-mod-old-text);
+  text-decoration: line-through;
+}
+
+.seg-mod-new {
+  background: var(--color-mod-new-bg);
+  color: var(--color-mod-new-text);
+}
+
+.seg-user-add {
+  background: var(--color-user-add-bg);
+  color: var(--color-user-add-text);
+}
+
+.seg-user-del {
+  background: var(--color-user-del-bg);
+  color: var(--color-user-del-text);
+}
+
+.seg-none {
+  background: transparent;
+  color: var(--color-text);
+}
+
+/* ── Search highlight ────────────────────────────────────── */
+.seg-search-hl {
+  background: var(--color-search-highlight);
+  color: var(--color-text);
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+.seg-search-hl.current {
+  background: var(--color-search-focus);
+  outline: 1px solid var(--color-focus-border);
+}
+
+/* ── Change-item flash when scrolled into view ───────────── */
+.ci-flash {
+  animation: ci-flash-anim 0.6s ease-out 2;
+}
+
+@keyframes ci-flash-anim {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 4px var(--color-focus-border); }
+}

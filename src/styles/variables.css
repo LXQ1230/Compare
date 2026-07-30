@@ -8,10 +8,10 @@
   --color-add-text: #116329;
   --color-del-bg: #ffebe9;
   --color-del-text: #922323;
-  --color-mod-old-bg: #ffebe9;
-  --color-mod-old-text: #922323;
-  --color-mod-new-bg: #e6ffec;
-  --color-mod-new-text: #116329;
+  --color-mod-old-bg: #fff8e1;
+  --color-mod-old-text: #946b00;
+  --color-mod-new-bg: #fffde7;
+  --color-mod-new-text: #f5a300;
   --color-user-add-bg: #fff3cd;
   --color-user-add-text: #856404;
   --color-user-del-bg: #f3e8ff;

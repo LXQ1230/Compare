@@ -134,6 +134,9 @@ export const useCompareStore = defineStore('compare', () => {
       }));
       storage.saveSegments(chunks).catch(() => { /* best-effort */ });
     }
+
+    // Build sidebar change-context list after segments are assembled
+    buildContexts();
   }
 
   function buildContexts(): void {
@@ -177,6 +180,7 @@ export const useCompareStore = defineStore('compare', () => {
         index: ci,
         total: stats.value.total,
         type,
+        side: s.side,
         lineA: posA,
         lineB: posB,
         before,

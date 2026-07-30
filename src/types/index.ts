@@ -21,6 +21,8 @@ export interface ChangeContext {
   index: number
   total: number
   type: 'add' | 'del' | 'mod'
+  /** For mod segments, which side of the pair. */
+  side?: 'old' | 'new'
   lineA: number
   lineB: number
   /** 变更位置前的文本片段（用于上下文展示） */

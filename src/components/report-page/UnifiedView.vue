@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useCompareStore } from '../../stores/compare';
+import { useSearchStore } from '../../stores/search';
 import { renderSegmentsToHTML } from '../../render/segmentRenderer';
 import { useEditorStore } from '../../stores/editor';
 
 const compareStore = useCompareStore();
 const editorStore = useEditorStore();
+const searchStore = useSearchStore();
 
-const htmlContent = computed(() => renderSegmentsToHTML(compareStore.segments));
+const htmlContent = computed(() =>
+  renderSegmentsToHTML(
+    compareStore.segments,
+    searchStore.matches.length > 0 ? searchStore.matches : undefined,
+  ),
+);
 const emptyText = computed(() =>
   compareStore.isComplete && compareStore.segments.length === 0
     ? '两个文件内容完全相同，无差异。' : null,
@@ -16,7 +23,7 @@ const emptyText = computed(() =>
 
 <template>
   <div v-if="emptyText" class="empty-notice">{{ emptyText }}</div>
-  <div v-else class="unified-view" :contenteditable="editorStore.isEditing" v-html="htmlContent" />
+  <div v-else class="unified-view" v-html="htmlContent" />
 </template>
 
 <style scoped>

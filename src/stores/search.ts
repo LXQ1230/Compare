@@ -15,9 +15,17 @@ export const useSearchStore = defineStore('search', () => {
   const matches = ref<SearchMatch[]>([]);
   const activeMatchIndex = ref(-1);
 
-  const activeMatch = computed(() => activeMatchIndex.value >= 0 ? matches.value[activeMatchIndex.value] ?? null : null);
+  const activeMatch = computed(() =>
+    activeMatchIndex.value >= 0 ? (matches.value[activeMatchIndex.value] ?? null) : null,
+  );
   const totalMatches = computed(() => matches.value.length);
-  const currentPosition = computed(() => activeMatchIndex.value >= 0 ? `${activeMatchIndex.value + 1}/${totalMatches.value}` : '0/0');
+  const currentPosition = computed(() =>
+    activeMatchIndex.value >= 0
+      ? `${activeMatchIndex.value + 1}/${totalMatches.value}`
+      : totalMatches.value > 0
+        ? `${totalMatches.value} 个`
+        : '0/0',
+  );
 
   function toggle(): void {
     isOpen.value ? close() : open();
@@ -42,11 +50,49 @@ export const useSearchStore = defineStore('search', () => {
   function next(): void {
     if (matches.value.length === 0) return;
     activeMatchIndex.value = (activeMatchIndex.value + 1) % matches.value.length;
+    scrollToActiveMatch();
   }
 
   function prev(): void {
     if (matches.value.length === 0) return;
-    activeMatchIndex.value = (activeMatchIndex.value - 1 + matches.value.length) % matches.value.length;
+    activeMatchIndex.value =
+      (activeMatchIndex.value - 1 + matches.value.length) % matches.value.length;
+    scrollToActiveMatch();
+  }
+
+  /** Scroll the active search match into view and flash it. */
+  function scrollToActiveMatch(): void {
+    const m = activeMatch.value;
+    if (!m) return;
+    // Find the parent <mark data-ci> containing this match's segment
+    const compareStore = useCompareStore();
+    const segments = compareStore.segments;
+    const idx = m.segmentIndex;
+    if (idx < 0 || idx >= segments.length) return;
+    const ci = segments[idx].ci;
+    if (ci == null) return;
+    const el = document.getElementById(`ci-${ci}`);
+    if (!el) return;
+    // Find our specific <mark class="seg-search-hl"> inside
+    const hls = el.querySelectorAll<HTMLElement>('.seg-search-hl');
+    if (hls.length === 0) return;
+    // Determine which search-hl mark corresponds to this match by position
+    // Build an array of {hl, offset} then pick the one matching this match's textOffset
+    let cumulativeOffset = 0;
+    for (const hl of hls) {
+      const textLen = (hl.textContent ?? '').length;
+      if (
+        cumulativeOffset <= m.textOffset &&
+        m.textOffset < cumulativeOffset + textLen
+      ) {
+        hl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const allHls = document.querySelectorAll('.seg-search-hl.current');
+        allHls.forEach((h) => h.classList.remove('current'));
+        hl.classList.add('current');
+        return;
+      }
+      cumulativeOffset += textLen;
+    }
   }
 
   function toggleCaseSensitive(): void {

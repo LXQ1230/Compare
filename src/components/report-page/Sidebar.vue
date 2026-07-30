@@ -11,10 +11,16 @@ function typeBadge(type: string): { label: string; cls: string } {
   return { label: '~', cls: 'badge-mod' };
 }
 
-function locationLabel(ctx: { type: string; lineA: number; lineB: number }): string {
+function typeLabel(type: string): string {
+  if (type === 'add') return '新增';
+  if (type === 'del') return '删除';
+  return '修改';
+}
+
+function locationLabel(ctx: { type: string; lineA: number; lineB: number; side?: 'old' | 'new' }): string {
   if (ctx.type === 'add') return `行 ${ctx.lineB}`;
   if (ctx.type === 'del') return `行 ${ctx.lineA}`;
-  return `行 ${ctx.lineA}`;
+  return `行 ${ctx.lineA} → ${ctx.lineB}`;
 }
 
 function scrollTo(ci: number) {
@@ -62,7 +68,7 @@ function scrollTo(ci: number) {
         <h4 class="section-title">变更列表</h4>
         <div v-if="compareStore.contexts.length === 0" class="empty-hint">暂无变更</div>
         <div
-          v-for="ctx in compareStore.contexts" :key="ctx.index"
+          v-for="ctx in compareStore.contexts" :key="`${ctx.index}-${ctx.side ?? 'none'}`"
           class="change-item" :class="`change-${ctx.type}`"
           @click="scrollTo(ctx.index)"
         >
@@ -76,7 +82,7 @@ function scrollTo(ci: number) {
             </div>
             <!-- lower: type + position -->
             <div class="change-meta">
-              <span class="meta-type">{{ typeBadge(ctx.type).label === '+' ? '新增' : typeBadge(ctx.type).label === '-' ? '删除' : '修改' }}</span>
+              <span class="meta-type">{{ typeLabel(ctx.type) }}</span>
               <span class="meta-sep">·</span>
               <span class="meta-loc">{{ locationLabel(ctx) }}</span>
             </div>
@@ -92,6 +98,7 @@ function scrollTo(ci: number) {
 .sidebar {
   width: 300px; border-right: 1px solid var(--color-border); display: flex;
   flex-shrink: 0; position: relative; background: var(--color-bg-secondary);
+  order: -1;
 }
 .sidebar.collapsed { width: 24px; }
 .collapse-btn {

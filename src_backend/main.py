@@ -13,13 +13,14 @@ from src_backend.autosave_manager import AutosaveManager
 from src_backend.diff_engine import diff_texts
 from src_backend.errors import AppError, Severity
 from src_backend.parsers import parse_docx, parse_md, parse_txt
+from src_backend.validators import _get_ext
 from src_backend.version_manager import VersionManager
 
 app = FastAPI(title="Compare - Document Comparison Tool")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
