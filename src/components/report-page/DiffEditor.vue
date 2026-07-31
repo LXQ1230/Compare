@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount } from "vue";
+import { watch, onBeforeUnmount } from "vue";
 import { useEditor, EditorContent } from "@tiptap/vue-3";
 import { Document } from "@tiptap/extension-document";
 import { Paragraph } from "@tiptap/extension-paragraph";
@@ -30,33 +30,43 @@ const editor = useEditor({
       const userResult = classifyEdit(lastBaseline, currentText);
       if (!userResult.dirty) return;
 
-      const { state, view } = ed;
-      const tr = state.tr;
-      let pos = 0;
+      const { tr } = ed.state;
+      let pos = 1; // ProseMirror: text content begins at offset 1
+
+      const userAddType = ed.state.schema.marks.userAdd;
+      const userDelType = ed.state.schema.marks.userDel;
 
       for (const us of userResult.segments) {
-        const len = us.text.length;
-        if (us.operation === "none") {
-          tr.removeMark(pos, pos + len, state.schema.marks.userAdd);
-          tr.removeMark(pos, pos + len, state.schema.marks.userDel);
-        } else if (us.operation === "add") {
-          tr.removeMark(pos, pos + len, state.schema.marks.userDel);
-          tr.addMark(pos, pos + len, state.schema.marks.userAdd.create());
-        } else {
-          tr.removeMark(pos, pos + len, state.schema.marks.userAdd);
-          tr.addMark(pos, pos + len, state.schema.marks.userDel.create());
+        // DELETE and MOD-OLD text only exists in baseline, NOT in the
+        // current document — skip them without advancing pos.
+        if (us.operation === 'del') continue;
+        if (us.operation === 'mod' && us.side === 'old') continue;
+
+        const from = pos;
+        const to = pos + us.text.length;
+
+        tr.removeMark(from, to, userAddType);
+        tr.removeMark(from, to, userDelType);
+
+        if (us.operation === 'add') {
+          tr.addMark(from, to, userAddType.create());
+        } else if (us.operation === 'mod') {
+          // side === 'new' — replaced text
+          tr.addMark(from, to, userDelType.create());
         }
-        pos += len;
+        // 'none': marks already removed, gets original diff color
+
+        pos = to;
       }
 
       if (tr.steps.length > 0) {
-        view.dispatch(tr);
+        ed.view.dispatch(tr);
       }
 
       lastBaseline = currentText;
       editorStore.editText = currentText;
       editorStore.hasEdits = true;
-    }, 400);
+    }, 300);
   },
   content: { type: "doc", content: [{ type: "paragraph" }] },
 });
