@@ -1,104 +1,68 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { useCompareStore } from '../../stores/compare';
 import { useEditorStore } from '../../stores/editor';
 import { renderSegmentsToHTML } from '../../render/segmentRenderer';
+import { classifyEdit } from '../../render/editClassifier';
 
 const compareStore = useCompareStore();
 const editorStore = useEditorStore();
 
-const editableRef = ref<HTMLDivElement | null>(null);
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const editText = ref('');
 
-/** Build the editable HTML from current editSegments (or compareStore on first entry). */
-function buildEditHtml(): string {
-  const src = editorStore.editSegments.length > 0
-    ? editorStore.editSegments
-    : compareStore.segments;
-  return renderSegmentsToHTML(src);
-}
-
-/** Save cursor offset via TreeWalker into editable content. */
-function saveCursor(el: HTMLElement): number {
-  const sel = window.getSelection();
-  if (!sel || !sel.rangeCount) return -1;
-  const range = sel.getRangeAt(0);
-  if (!el.contains(range.startContainer)) return -1;
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let offset = range.startOffset;
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) {
-    if (node === range.startContainer) return offset;
-    offset += (node.textContent ?? '').length;
-  }
-  return -1;
-}
-
-/** Restore cursor to absolute character offset into editable content. */
-function restoreCursor(el: HTMLElement, targetOffset: number) {
-  if (targetOffset < 0) return;
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let node: Text | null;
-  let accum = 0;
-  while ((node = walker.nextNode() as Text | null)) {
-    const len = (node.textContent ?? '').length;
-    if (accum + len >= targetOffset) {
-      const range = document.createRange();
-      range.setStart(node, targetOffset - accum);
-      range.collapse(true);
-      const sel = window.getSelection();
-      if (sel) {
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
-      return;
-    }
-    accum += len;
-  }
-}
-
-/**
- * Called on each input — debounce 600ms then diff and re-render
- * with cursor preservation.
- */
-function onInput() {
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(async () => {
-    if (!editableRef.value) return;
-    const cursorPos = saveCursor(editableRef.value);
-    const currentText = editableRef.value.textContent ?? '';
-    const merged = editorStore.applyEdit(currentText);
-    if (editorStore.editSegments === merged) return; // no change
-
-    await nextTick();
-    if (!editableRef.value) return;
-    editableRef.value.innerHTML = renderSegmentsToHTML(merged);
-    restoreCursor(editableRef.value, cursorPos);
-  }, 600);
-}
-
-// On first entry, populate with original view-mode HTML
+// When entering edit mode, populate textarea from edit segments
 watch(
   () => editorStore.isEditing,
   (editing) => {
-    if (editing && editableRef.value) {
-      editableRef.value.innerHTML = buildEditHtml();
+    if (editing) {
+      const src = editorStore.editSegments.length > 0
+        ? editorStore.editSegments
+        : compareStore.segments;
+      editText.value = src.map((s) => s.text).join('');
     }
   },
 );
+
+/** Real-time preview: diff baseline vs current textarea, then merge with original colors. */
+const liveHtml = computed(() => {
+  if (!editorStore.isEditing || !editText.value) return '';
+  if (editText.value === editorStore.baseline) {
+    // No changes — show original segments as-is
+    return renderSegmentsToHTML(
+      editorStore.editSegments.length > 0 ? editorStore.editSegments : compareStore.segments
+    );
+  }
+  // User made changes — classify and show merged result
+  const result = classifyEdit(editorStore.baseline, editText.value);
+  if (!result.dirty) return '';
+  return renderSegmentsToHTML(result.segments);
+});
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 </script>
 
 <template>
   <div v-if="editorStore.isEditing" class="edit-panel">
-    <h4 class="pane-title">编辑模式 — 琥珀色=新增 紫色=删除 绿色/红色=原始差异</h4>
-    <div
-      ref="editableRef"
-      class="edit-content"
-      contenteditable="true"
-      spellcheck="false"
-      v-html="buildEditHtml()"
-      @input="onInput"
-    />
+    <div class="edit-panes">
+      <div class="edit-pane edit-left">
+        <h4 class="pane-title">
+          编辑区
+          <span class="hint">（琥珀色=新增 紫色=删除 绿色/红色=原始差异）</span>
+        </h4>
+        <textarea
+          v-model="editText"
+          class="edit-textarea"
+          spellcheck="false"
+          @input="editorStore.applyEdit(editText)"
+        />
+      </div>
+      <div class="edit-pane edit-right">
+        <h4 class="pane-title">实时预览</h4>
+        <div class="edit-preview" v-html="liveHtml" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -106,17 +70,32 @@ watch(
 .edit-panel {
   flex: 1; display: flex; flex-direction: column; overflow: hidden;
 }
+.edit-panes {
+  flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px;
+  overflow: hidden;
+}
+.edit-pane {
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--color-border); border-radius: 8px;
+}
 .pane-title {
   font-size: 12px; font-weight: 600; padding: 6px 12px;
   background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
+  margin: 0; display: flex; align-items: center; gap: 8px;
 }
-.edit-content {
-  flex: 1; padding: 16px; overflow: auto;
+.pane-title .hint {
+  font-weight: 400; color: var(--color-text-secondary); font-size: 11px;
+}
+.edit-textarea {
+  flex: 1; padding: 12px;
+  font-family: var(--font-mono); font-size: var(--font-size-base);
+  line-height: 1.6; border: none; outline: none; resize: none;
+  background: var(--color-bg); color: var(--color-text);
+}
+.edit-preview {
+  flex: 1; padding: 12px; overflow: auto;
   font-family: var(--font-mono); font-size: var(--font-size-base);
   line-height: 1.6; white-space: pre-wrap; word-break: break-all;
-  background: var(--color-bg); color: var(--color-text);
-  outline: 2px solid var(--color-focus-border);
-  outline-offset: -2px;
+  background: var(--color-bg);
 }
 </style>
