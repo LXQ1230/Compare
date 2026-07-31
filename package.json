@@ -11,10 +11,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@tiptap/extension-document": "^3.29.2",
-    "@tiptap/extension-paragraph": "^3.29.2",
-    "@tiptap/extension-text": "^3.29.2",
-    "@tiptap/vue-3": "^3.29.2",
+    "@codemirror/lang-cpp": "^6.0.3",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.7",
+    "codemirror": "^6.0.2",
     "diff-match-patch": "^1.0.5",
     "pinia": "^2.3.1",
     "vue": "^3.5.40",
