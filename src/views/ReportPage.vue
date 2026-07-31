@@ -11,7 +11,7 @@ import ProgressHeader from '../components/report-page/ProgressHeader.vue';
 import SearchBar from '../components/report-page/SearchBar.vue';
 import UnifiedView from '../components/report-page/UnifiedView.vue';
 import SplitView from '../components/report-page/SplitView.vue';
-import EditLivePanel from '../components/report-page/EditLivePanel.vue';
+import DiffEditor from '../components/report-page/DiffEditor.vue';
 import Sidebar from '../components/report-page/Sidebar.vue';
 import ErrorDisplay from '../components/report-page/ErrorDisplay.vue';
 import ExportDialog from '../components/report-page/ExportDialog.vue';
@@ -83,7 +83,7 @@ versionStore.loadVersions();
     <div class="report-body">
       <Sidebar />
       <main class="report-main">
-        <EditLivePanel />
+        <DiffEditor />
         <UnifiedView v-if="viewStore.viewMode === 'unified' && !editorStore.isEditing" />
         <SplitView v-else-if="!editorStore.isEditing" />
       </main>
