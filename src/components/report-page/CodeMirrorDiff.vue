@@ -59,7 +59,12 @@ function buildDecoSet(segs: Segment[], mode: "diff" | "user"): DecorationSet {
   for (const s of segs) {
     const len = s.text.length;
     if (len === 0) continue;
-    if (mode === "user" && s.operation === "none") { pos += len; continue; }
+    // classifyEdit del/mod-old: only in baseline, NOT in doc — skip phantom
+    const phantom = s.operation === "del" || (s.operation === "mod" && s.side === "old");
+    if (mode === "user") {
+      if (phantom) continue;
+      if (s.operation === "none") { pos += len; continue; }
+    }
     const cls = markClass(s);
     if (cls) {
       builder.add(pos, pos + len, Decoration.mark({ class: cls }));
