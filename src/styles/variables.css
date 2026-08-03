@@ -16,6 +16,10 @@
   --color-user-add-text: #856404;
   --color-user-del-bg: #f3e8ff;
   --color-user-del-text: #6b21a8;
+  --color-user-mod-old-bg: #fef3c7;
+  --color-user-mod-old-text: #946b00;
+  --color-user-mod-new-bg: #fef3c7;
+  --color-user-mod-new-text: #946b00;
   --color-search-highlight: #fff9c4;
   --color-search-focus: #fff3cd;
   --color-focus-border: #0969da;

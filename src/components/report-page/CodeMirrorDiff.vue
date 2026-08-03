@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount, nextTick } from "vue";
 import { EditorView, Decoration, DecorationSet, WidgetType } from "@codemirror/view";
-import { EditorState, StateEffect, StateEffectType, StateField, RangeSetBuilder } from "@codemirror/state";
+import { EditorState, StateEffect, StateEffectType, StateField, RangeSetBuilder, type Extension } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
 import { defaultKeymap, historyKeymap } from "@codemirror/commands";
+import { markdown } from "@codemirror/lang-markdown";
 import { useCompareStore } from "../../stores/compare";
 import { useEditorStore } from "../../stores/editor";
 import { useSearchStore } from "../../stores/search";
@@ -199,6 +200,13 @@ function buildSearchDecos(matches: { segmentIndex: number; textOffset: number; l
 }
 
 // ── Editor lifecycle ─────────────────────────────────────────
+/** Language extensions based on the compared document's type (rev. B4). */
+function languageExtensions(): Extension[] {
+  const name = compareStore.fileAName.toLowerCase();
+  if (name.endsWith(".md") || name.endsWith(".markdown")) return [markdown()];
+  return [];
+}
+
 function createEditor(text: string, diffSegments: Segment[]) {
   if (view) { view.destroy(); view = null; }
   diffSegmentsRef = diffSegments;
@@ -212,6 +220,7 @@ function createEditor(text: string, diffSegments: Segment[]) {
       keymap.of([...defaultKeymap, ...historyKeymap]), // rev. A1: undo/redo keybinds
       EditorView.editable.of(true),
       EditorView.lineWrapping,
+      ...languageExtensions(), // rev. B4: markdown syntax highlighting
       EditorView.updateListener.of((update) => {
         if (!update.docChanged || !view) return;
         const current = update.state.doc.toString();
@@ -400,20 +409,21 @@ onBeforeUnmount(() => {
 .cm-mod-new { background: var(--color-mod-new-bg); color: var(--color-mod-new-text); }
 
 /* User edit colors — applied as the TOP decoration, so they win */
-.cm-user-add { background: var(--color-user-add-bg); color: var(--color-user-add-text); }
-.cm-user-del { background: var(--color-user-del-bg); color: var(--color-user-del-text); text-decoration: line-through; }
-.cm-user-mod-old { background: var(--color-user-mod-old-bg, #fef3c7); color: var(--color-user-mod-old-text, #946b00); text-decoration: line-through; outline: 1px dashed #d4a72c; }
-.cm-user-mod-new { background: var(--color-user-mod-new-bg, #fef3c7); color: var(--color-user-mod-new-text, #946b00); font-weight: 600; outline: 1px solid #d4a72c; }
+.cm-user-add { background: var(--color-user-add-bg); color: var(--color-user-add-text); text-decoration: none; font-weight: 400; }
+.cm-user-del { background: var(--color-user-del-bg); color: var(--color-user-del-text); text-decoration: line-through; font-weight: 400; }
+.cm-user-mod-old { background: var(--color-user-mod-old-bg); color: var(--color-user-mod-old-text); text-decoration: line-through; font-weight: 400; outline: 1px dashed #d4a72c; }
+.cm-user-mod-new { background: var(--color-user-mod-new-bg); color: var(--color-user-mod-new-text); text-decoration: none; font-weight: 600; outline: 1px solid #d4a72c; }
 
 /* Phantom widget (deleted/mod-old text shown at its original spot) */
 .cm-phantom {
   text-decoration: line-through;
+  font-weight: 400;
   border-radius: 3px;
   padding: 0 2px;
   margin: 0 1px;
 }
 .cm-phantom.cm-user-del { background: var(--color-user-del-bg); color: var(--color-user-del-text); }
-.cm-phantom.cm-user-mod-old { background: var(--color-user-mod-old-bg, #fef3c7); color: var(--color-user-mod-old-text, #946b00); outline: 1px dashed #d4a72c; }
+.cm-phantom.cm-user-mod-old { background: var(--color-user-mod-old-bg); color: var(--color-user-mod-old-text); outline: 1px dashed #d4a72c; }
 .cm-phantom.cm-del { background: var(--color-del-bg); color: var(--color-del-text); }
 .cm-phantom.cm-mod-old { background: var(--color-mod-old-bg); color: var(--color-mod-old-text); }
 

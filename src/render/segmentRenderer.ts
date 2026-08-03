@@ -24,7 +24,8 @@ function esc(s: string): string {
 function segmentClass(s: Segment): string {
   if (s.origin === 'user') {
     if (s.operation === 'add') return 'seg-user-add';
-    if (s.operation === 'del' || s.operation === 'mod') return 'seg-user-del';
+    if (s.operation === 'del') return 'seg-user-del';
+    if (s.operation === 'mod') return s.side === 'old' ? 'seg-user-mod-old' : 'seg-user-mod-new';
     return 'seg-none';
   }
   switch (s.operation) {
