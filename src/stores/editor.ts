@@ -17,6 +17,22 @@ export const useEditorStore = defineStore("editor", () => {
   /** Monotonic token — bumped by resetToOriginal so CodeMirrorDiff can clear user decorations (rev. C2). */
   const resetToken = ref(0);
 
+  /**
+   * Synchronous flush callback registered by CodeMirrorDiff (rev. D1/6-5).
+   * Export needs to read `editText` fresh even while the debounced classify
+   * is still pending, so the flush must run synchronously — a watched token
+   * would be async and arrive too late.
+   */
+  let flushFn: (() => void) | null = null;
+
+  function registerFlush(fn: () => void): void {
+    flushFn = fn;
+  }
+
+  function flushEditsSync(): void {
+    flushFn?.();
+  }
+
   /** Baseline fixed at enterEdit time — NEVER reassigned (rev. 6-2). */
   const originalBaseline = ref("");
 
@@ -74,5 +90,6 @@ export const useEditorStore = defineStore("editor", () => {
   });
 
   return { isEditing, editSegments, editText, hasEdits, originalBaseline, resetToken,
+    registerFlush, flushEditsSync,
     enterEdit, exitEdit, resetToOriginal, getEditedSegments, editedStats, editedContexts };
 });

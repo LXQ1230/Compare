@@ -224,6 +224,31 @@ function ensureEditor() {
   editorStore.editText = baseline;
   diffSegmentsRef = segs;
 
+  // Rev. D1/6-5: synchronous flush — run classify immediately so export
+  // reads content that is never behind the cursor (debounce bypassed).
+  editorStore.registerFlush(() => {
+    const v = view;
+    if (!v) return;
+    const fresh = v.state.doc.toString();
+    if (!fresh || fresh === baseline) return;
+    try {
+      const userResult = classifyEdit(baseline, fresh);
+      v.dispatch({
+        effects: setUserDecos.of(
+          userResult.dirty ? buildDecoSet(userResult.segments, "user") : Decoration.none,
+        ),
+      });
+      if (userResult.dirty) rebuildDiffLayer(v, userResult.segments);
+      else restoreDiffLayer();
+      editorStore.editText = fresh;
+      editorStore.hasEdits = userResult.dirty;
+    } catch (e) {
+      // Rev. A10: degrade to no user decorations instead of crashing.
+      console.error("classifyEdit failed", e);
+      v.dispatch({ effects: setUserDecos.of(Decoration.none) });
+    }
+  });
+
   const state = EditorState.create({
     doc: baseline || "",
     extensions: [

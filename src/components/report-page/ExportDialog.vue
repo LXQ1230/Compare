@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { useCompareStore } from '../../stores/compare';
+import { useEditorStore } from '../../stores/editor';
 import { exportToTXT, exportToHTML, exportToMD, downloadFile } from '../../export/exporters';
 
 const compareStore = useCompareStore();
+const editorStore = useEditorStore();
 
 defineEmits<{ close: [] }>();
 
@@ -12,13 +14,32 @@ const formats = [
   { id: 'md', label: 'Markdown (.md)', mime: 'text/markdown' },
 ];
 
+/**
+ * Force-flush any pending debounced classify, so the exported content is
+ * never behind the cursor (rev. D1 / 6-5). The flush runs synchronously
+ * through the callback registered by CodeMirrorDiff.
+ */
+function flushEdits(): void {
+  if (editorStore.isEditing) {
+    editorStore.flushEditsSync();
+  }
+}
+
 function doExport(formatId: string) {
   const fmt = formats.find((f) => f.id === formatId);
   if (!fmt) return;
+
+  // Rev. D1 / 6-6: TXT/HTML/MD all read the EDITED segments while editing,
+  // the original compareStore segments otherwise.
+  flushEdits();
+  const segments = editorStore.isEditing
+    ? editorStore.getEditedSegments()
+    : compareStore.segments;
+
   let content: string;
-  if (formatId === 'html') content = exportToHTML(compareStore.segments);
-  else if (formatId === 'md') content = exportToMD(compareStore.segments);
-  else content = exportToTXT(compareStore.segments);
+  if (formatId === 'html') content = exportToHTML(segments);
+  else if (formatId === 'md') content = exportToMD(segments);
+  else content = exportToTXT(segments);
   downloadFile(content, `compare-report.${formatId}`, fmt.mime);
 }
 </script>
