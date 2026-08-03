@@ -14,6 +14,9 @@ export const useEditorStore = defineStore("editor", () => {
   const editText = ref("");
   const hasEdits = ref(false);
 
+  /** Monotonic token — bumped by resetToOriginal so CodeMirrorDiff can clear user decorations (rev. C2). */
+  const resetToken = ref(0);
+
   /** Baseline fixed at enterEdit time — NEVER reassigned (rev. 6-2). */
   const originalBaseline = ref("");
 
@@ -36,6 +39,7 @@ export const useEditorStore = defineStore("editor", () => {
     editSegments.value = cloneSegments(compareStore.segments);
     editText.value = "";
     hasEdits.value = false;
+    resetToken.value++;
   }
 
   /** Classify current edits against the FIXED baseline (rev. A2). */
@@ -69,6 +73,6 @@ export const useEditorStore = defineStore("editor", () => {
     return result;
   });
 
-  return { isEditing, editSegments, editText, hasEdits, originalBaseline,
+  return { isEditing, editSegments, editText, hasEdits, originalBaseline, resetToken,
     enterEdit, exitEdit, resetToOriginal, getEditedSegments, editedStats, editedContexts };
 });

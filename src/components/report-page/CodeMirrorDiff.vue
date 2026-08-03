@@ -22,6 +22,7 @@ let classifyTimer: ReturnType<typeof setTimeout> | null = null;
 let baseline = "";            // fixed at editor creation — NEVER reassigned (rev. A2)
 let diffSegmentsRef: Segment[] = []; // original diff segments, kept for diff-layer rebuilds (rev. A7)
 let segOffsets: Array<{ ci: number; start: number; end: number }> = []; // ci → doc offset (rev. A8)
+let cachedDocFingerprint = ""; // doc-text hash of the cached view (rev. C3 guard)
 
 // ── Effects ──────────────────────────────────────────────────
 const setDiffDecos = StateEffect.define<DecorationSet>();
@@ -207,12 +208,24 @@ function languageExtensions(): Extension[] {
   return [];
 }
 
-function createEditor(text: string, diffSegments: Segment[]) {
-  if (view) { view.destroy(); view = null; }
-  diffSegmentsRef = diffSegments;
+/**
+ * Create the EditorView ONCE and cache it (rev. C3). Re-entering edit
+ * mode reuses the same view/state, preserving undo history, selection
+ * and scroll position. The container div is kept in the DOM via v-show
+ * so the view never detaches between edit sessions.
+ */
+function ensureEditor() {
+  if (view) return;
+  const segs = editorStore.editSegments.length > 0
+    ? editorStore.editSegments
+    : compareStore.segments;
+  baseline = buildDocText(segs);
+  cachedDocFingerprint = baseline;
+  editorStore.editText = baseline;
+  diffSegmentsRef = segs;
 
   const state = EditorState.create({
-    doc: text || "",
+    doc: baseline || "",
     extensions: [
       diffField,
       userField,
@@ -222,7 +235,7 @@ function createEditor(text: string, diffSegments: Segment[]) {
       EditorView.lineWrapping,
       ...languageExtensions(), // rev. B4: markdown syntax highlighting
       EditorView.updateListener.of((update) => {
-        if (!update.docChanged || !view) return;
+        if (!update.docChanged) return;
         const current = update.state.doc.toString();
         if (!current || current === baseline) return;
 
@@ -269,7 +282,7 @@ function createEditor(text: string, diffSegments: Segment[]) {
   });
 
   // Apply diff decorations after mount (no exclusion yet — user hasn't edited)
-  view.dispatch({ effects: setDiffDecos.of(buildDecoSet(diffSegments, "diff")) });
+  view.dispatch({ effects: setDiffDecos.of(buildDecoSet(diffSegmentsRef, "diff")) });
 }
 
 // ci → doc-offset map for edit-mode navigation (rev. A8/E2)
@@ -323,18 +336,42 @@ watch(
   () => editorStore.isEditing,
   async (editing) => {
     await nextTick();
-    if (!editing) return;
-
+    if (!editing) {
+      syncSearchDecos();
+      return;
+    }
     const segs = editorStore.editSegments.length > 0
       ? editorStore.editSegments
       : compareStore.segments;
-    baseline = buildDocText(segs);
-    editorStore.editText = baseline;
-    createEditor(baseline, segs);
+    const freshBaseline = buildDocText(segs);
+    // Rev. C3 guard: a NEW comparison produces different baseline text.
+    // The cached view cannot be reused (its doc/history belong to the old
+    // document), so tear it down and rebuild from scratch.
+    if (view && freshBaseline !== cachedDocFingerprint) {
+      view.destroy();
+      view = null;
+    }
+    ensureEditor();
     buildOffsetMap();
     exposeNavigation();
     // Rev. A9: show search highlights inside the editor if a search is active
     syncSearchDecos();
+  },
+);
+
+// Rev. C2: "还原" clears user decorations in the editor — the store bumps
+// resetToken and we drop the user layer + rebuild the untouched diff layer.
+watch(
+  () => editorStore.resetToken,
+  async () => {
+    if (!editorStore.isEditing || !view) return;
+    await nextTick();
+    const v = view;
+    v.dispatch({ effects: setUserDecos.of(Decoration.none) });
+    restoreDiffLayer();
+    v.dispatch({
+      changes: { from: 0, to: v.state.doc.length, insert: baseline },
+    });
   },
 );
 
@@ -366,7 +403,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="editorStore.isEditing" class="cm-diff-wrapper">
+  <div v-show="editorStore.isEditing" class="cm-diff-wrapper">
     <h4 class="pane-title">
       编辑模式
       <span class="hint">琥珀=新增 紫=删除 绿/红/黄=原始差异</span>
