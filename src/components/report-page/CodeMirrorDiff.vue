@@ -85,7 +85,7 @@ function isDocSegment(s: Segment): boolean {
   return !isPhantomSegment(s);
 }
 
-function buildDecoSet(segs: Segment[], mode: "diff" | "user"): DecorationSet {
+function buildDecoSet(segs: Segment[]): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   let pos = 0;
   for (const s of segs) {
@@ -94,10 +94,9 @@ function buildDecoSet(segs: Segment[], mode: "diff" | "user"): DecorationSet {
     if (isPhantomSegment(s)) {
       // Phantom consumes no doc space in EITHER mode (rev. A3 — fixes
       // diff-mode marks landing on wrong offsets after a phantom segment).
-      if (mode === "user") {
-        // Widget at original position for deleted/mod-old (rev. A5/A6)
-        builder.add(pos, pos, Decoration.widget({ widget: new PhantomWidget(s.text, markClass(s)), side: -1 }));
-      }
+      // Rev. B5: 保留查看模式的对比结果——两种模式都在原位置渲染 widget:
+      // user 模式用用户色(cm-user-del/mod-old), diff 模式用原始差异色(cm-del/mod-old)。
+      builder.add(pos, pos, Decoration.widget({ widget: new PhantomWidget(s.text, markClass(s)), side: -1 }));
       continue;
     }
     if (s.operation === "none") { pos += len; continue; }
@@ -154,7 +153,10 @@ function rebuildDiffLayer(v: EditorView, userSegs: Segment[]): void {
         const avail = bs.text.length - bOff;
         if (avail <= 0) { bi++; bOff = 0; continue; }
         const take = Math.min(need, avail);
-        if (!isPhantomSegment(bs) && bs.operation !== "none") {
+        if (isPhantomSegment(bs)) {
+          // Rev. B5: 未触碰区的原始 del/mod-old 在原位以 widget 显示(与进入时一致)
+          builder.add(spanStart + placed, spanStart + placed, Decoration.widget({ widget: new PhantomWidget(bs.text, markClass(bs)), side: -1 }));
+        } else if (bs.operation !== "none") {
           // Rev. E2: data-ci attribute mirrors the non-editing anchor (id="ci-N").
           const attrs = bs.ci != null ? { "data-ci": String(bs.ci) } : undefined;
           builder.add(spanStart + placed, spanStart + placed + take, Decoration.mark({ class: markClass(bs), attributes: attrs }));
@@ -180,9 +182,14 @@ function buildDiffLayerInitial(): void {
   const builder = new RangeSetBuilder<Decoration>();
   let pos = 0;
   for (const s of diffSegmentsRef) {
-    if (isPhantomSegment(s)) continue;
     const len = s.text.length;
     if (len === 0) continue;
+    if (isPhantomSegment(s)) {
+      // Rev. B5: 保留查看模式的对比结果——原始 del/mod-old 在原位以 widget 显示
+      // (红底删除线 / 黄底删除线),与用户删除显示形式一致,不占文档位置。
+      builder.add(pos, pos, Decoration.widget({ widget: new PhantomWidget(s.text, markClass(s)), side: -1 }));
+      continue;
+    }
     const cls = markClass(s);
     if (cls && s.operation !== "none") builder.add(pos, pos + len, Decoration.mark({ class: cls }));
     pos += len;
@@ -256,7 +263,7 @@ function ensureEditor() {
       const userResult = classifyEdit(baseline, fresh);
       v.dispatch({
         effects: setUserDecos.of(
-          userResult.dirty ? buildDecoSet(userResult.segments, "user") : Decoration.none,
+          userResult.dirty ? buildDecoSet(userResult.segments) : Decoration.none,
         ),
       });
       if (userResult.dirty) rebuildDiffLayer(v, userResult.segments);
@@ -299,7 +306,7 @@ function ensureEditor() {
             const userResult = classifyEdit(baseline, fresh);
             v.dispatch({
               effects: setUserDecos.of(
-                userResult.dirty ? buildDecoSet(userResult.segments, "user") : Decoration.none,
+                userResult.dirty ? buildDecoSet(userResult.segments) : Decoration.none,
               ),
             });
             if (userResult.dirty) {
@@ -329,7 +336,7 @@ function ensureEditor() {
   });
 
   // Apply diff decorations after mount (no exclusion yet — user hasn't edited)
-  view.dispatch({ effects: setDiffDecos.of(buildDecoSet(diffSegmentsRef, "diff")) });
+  view.dispatch({ effects: setDiffDecos.of(buildDecoSet(diffSegmentsRef)) });
 }
 
 // ci → doc-offset map for edit-mode navigation (rev. A8/E2)
