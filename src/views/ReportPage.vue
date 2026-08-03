@@ -63,6 +63,15 @@ useKeyboardShortcuts({
 const activeContextIdx = ref(-1);
 
 function scrollToContext(ctx: { index: number }): void {
+  // Rev. E3: editing mode navigates through the CodeMirror channel
+  // (__cmScrollToCi), otherwise the classic ci-N DOM anchor.
+  const host = document.querySelector('.report-main') as
+    | (HTMLElement & { __cmScrollToCi?: (ci: number) => void })
+    | null;
+  if (editorStore.isEditing && host?.__cmScrollToCi) {
+    host.__cmScrollToCi(ctx.index);
+    return;
+  }
   const el = document.getElementById(`ci-${ctx.index}`);
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });

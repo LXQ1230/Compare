@@ -97,7 +97,10 @@ function buildDecoSet(segs: Segment[], mode: "diff" | "user"): DecorationSet {
     }
     if (s.operation === "none") { pos += len; continue; }
     const cls = markClass(s);
-    if (cls) builder.add(pos, pos + len, Decoration.mark({ class: cls }));
+    // Rev. E2: attach data-ci so the DOM carries the same anchor as the
+    // ci→offset map used by __cmScrollToCi (editing-mode navigation).
+    const attrs = s.ci != null ? { "data-ci": String(s.ci) } : undefined;
+    if (cls) builder.add(pos, pos + len, Decoration.mark({ class: cls, attributes: attrs }));
     pos += len;
   }
   return builder.finish();
@@ -147,7 +150,9 @@ function rebuildDiffLayer(v: EditorView, userSegs: Segment[]): void {
         if (avail <= 0) { bi++; bOff = 0; continue; }
         const take = Math.min(need, avail);
         if (!isPhantomSegment(bs) && bs.operation !== "none") {
-          builder.add(spanStart + placed, spanStart + placed + take, Decoration.mark({ class: markClass(bs) }));
+          // Rev. E2: data-ci attribute mirrors the non-editing anchor (id="ci-N").
+          const attrs = bs.ci != null ? { "data-ci": String(bs.ci) } : undefined;
+          builder.add(spanStart + placed, spanStart + placed + take, Decoration.mark({ class: markClass(bs), attributes: attrs }));
         }
         placed += take;
         need -= take;
@@ -187,14 +192,25 @@ function restoreDiffLayer(): void {
 
 /**
  * Build search-match decorations over the CURRENT document.
- * Matches come from searchStore (already computed against the edited doc).
- * Since CM offsets == JS string offsets, we overlay marks directly.
+ * Matches come from searchStore (computed against the EDITED segments —
+ * see E1). searchInSegments reports segment-relative offsets, so we must
+ * convert via the segment list: CM doc position = cumulative length of
+ * preceding non-phantom segments + segment-relative offset.
  */
 function buildSearchDecos(matches: { segmentIndex: number; textOffset: number; length: number }[]): DecorationSet {
+  const segs = editorStore.getEditedSegments();
+  // Cumulative doc offsets of each segment (phantom segments take no space).
+  const docOffsets: number[] = [];
+  let pos = 0;
+  for (const s of segs) {
+    docOffsets.push(pos);
+    if (!isPhantomSegment(s)) pos += s.text.length;
+  }
   const builder = new RangeSetBuilder<Decoration>();
   for (const m of matches) {
-    const start = m.textOffset;
-    const end = m.textOffset + m.length;
+    if (m.segmentIndex < 0 || m.segmentIndex >= docOffsets.length) continue;
+    const start = docOffsets[m.segmentIndex] + m.textOffset;
+    const end = start + m.length;
     if (end > start) builder.add(start, end, Decoration.mark({ class: "cm-search-hl" }));
   }
   return builder.finish();

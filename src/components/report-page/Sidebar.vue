@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { useCompareStore } from '../../stores/compare';
+import { useEditorStore } from '../../stores/editor';
 import { useViewStore } from '../../stores/view';
 
 const compareStore = useCompareStore();
+const editorStore = useEditorStore();
 const viewStore = useViewStore();
 
 function typeBadge(type: string): { label: string; cls: string } {
@@ -24,6 +26,15 @@ function locationLabel(ctx: { type: string; lineA: number; lineB: number; side?:
 }
 
 function scrollTo(ci: number) {
+  // Rev. E3: editing mode navigates through the CodeMirror channel
+  // (__cmScrollToCi), otherwise the classic ci-N DOM anchor.
+  const host = document.querySelector('.report-main') as
+    | (HTMLElement & { __cmScrollToCi?: (ci: number) => void })
+    | null;
+  if (editorStore.isEditing && host?.__cmScrollToCi) {
+    host.__cmScrollToCi(ci);
+    return;
+  }
   const el = document.getElementById(`ci-${ci}`);
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });

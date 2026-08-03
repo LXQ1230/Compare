@@ -7,6 +7,7 @@ import { ref, computed } from 'vue';
 import type { SearchMatch } from '@/utils/search';
 import { searchInSegments, type SearchOptions } from '@/utils/search';
 import { useCompareStore } from './compare';
+import { useEditorStore } from './editor';
 
 export const useSearchStore = defineStore('search', () => {
   const isOpen = ref(false);
@@ -43,7 +44,13 @@ export const useSearchStore = defineStore('search', () => {
 
   function search(): void {
     const compareStore = useCompareStore();
-    matches.value = searchInSegments(compareStore.segments, query.value, options.value);
+    const editorStore = useEditorStore();
+    // Rev. E1: while editing, search the EDITED segments so hits match the
+    // live editor document (and its search-highlight layer).
+    const source = editorStore.isEditing
+      ? editorStore.getEditedSegments()
+      : compareStore.segments;
+    matches.value = searchInSegments(source, query.value, options.value);
     activeMatchIndex.value = matches.value.length > 0 ? 0 : -1;
   }
 
