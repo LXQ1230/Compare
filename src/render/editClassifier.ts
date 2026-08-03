@@ -16,6 +16,16 @@ export interface EditResult {
   segments: Segment[];
 }
 
+/** A segment that exists only in the baseline (del / mod-old) — absent from the new document. */
+export function isPhantomSegment(s: Segment): boolean {
+  return s.operation === 'del' || (s.operation === 'mod' && s.side === 'old');
+}
+
+/** Build the new-document text: concatenate segments, dropping phantom ones. */
+export function buildDocText(segs: Segment[]): string {
+  return segs.filter((s) => !isPhantomSegment(s)).map((s) => s.text).join('');
+}
+
 /**
  * Diff `baseline` against `edited` at character level and produce
  * user-origin segments suitable for `renderSegmentsToHTML`.

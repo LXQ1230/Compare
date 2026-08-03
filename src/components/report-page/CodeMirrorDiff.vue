@@ -1,48 +1,53 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount, nextTick } from "vue";
-import { EditorView, Decoration, DecorationSet } from "@codemirror/view";
-import { EditorState, StateEffect, StateField, RangeSetBuilder } from "@codemirror/state";
+import { EditorView, Decoration, DecorationSet, WidgetType } from "@codemirror/view";
+import { EditorState, StateEffect, StateEffectType, StateField, RangeSetBuilder } from "@codemirror/state";
+import { keymap } from "@codemirror/view";
+import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { useCompareStore } from "../../stores/compare";
 import { useEditorStore } from "../../stores/editor";
-import { classifyEdit } from "../../render/editClassifier";
+import { useSearchStore } from "../../stores/search";
+import { classifyEdit, isPhantomSegment, buildDocText } from "../../render/editClassifier";
+import { searchInSegments } from "../../utils/search";
 import type { Segment } from "@/types";
 
 const compareStore = useCompareStore();
 const editorStore = useEditorStore();
+const searchStore = useSearchStore();
 
 const containerRef = ref<HTMLDivElement | null>(null);
 let view: EditorView | null = null;
 let classifyTimer: ReturnType<typeof setTimeout> | null = null;
-let lastBaseline = "";
+let baseline = "";            // fixed at editor creation — NEVER reassigned (rev. A2)
+let diffSegmentsRef: Segment[] = []; // original diff segments, kept for diff-layer rebuilds (rev. A7)
+let segOffsets: Array<{ ci: number; start: number; end: number }> = []; // ci → doc offset (rev. A8)
 
 // ── Effects ──────────────────────────────────────────────────
 const setDiffDecos = StateEffect.define<DecorationSet>();
 const setUserDecos = StateEffect.define<DecorationSet>();
+const setSearchDecos = StateEffect.define<DecorationSet>();
 
 // ── State fields: DecorationSet ─────────────────────────────────
-const diffField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update: (val, tr) => {
-    for (const e of tr.effects) if (e.is(setDiffDecos)) val = e.value;
-    return val;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
-
-const userField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update: (val, tr) => {
-    for (const e of tr.effects) if (e.is(setUserDecos)) val = e.value;
-    return val;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
+function makeField(effect: StateEffectType<DecorationSet>) {
+  return StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update: (val, tr) => {
+      for (const e of tr.effects) if (e.is(effect)) val = e.value;
+      return val;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
+}
+const diffField = makeField(setDiffDecos);
+const userField = makeField(setUserDecos);
+const searchField = makeField(setSearchDecos);
 
 // ── Helpers ──────────────────────────────────────────────────
 function markClass(s: Segment): string {
   if (s.origin === "user") {
     if (s.operation === "add") return "cm-user-add";
-    if (s.operation === "del" || s.operation === "mod") return "cm-user-del";
+    if (s.operation === "del") return "cm-user-del";
+    if (s.operation === "mod") return s.side === "old" ? "cm-user-mod-old" : "cm-user-mod-new";
     return "";
   }
   switch (s.operation) {
@@ -53,23 +58,142 @@ function markClass(s: Segment): string {
   }
 }
 
+/** Widget showing deleted/mod-old text at its original position (rev. A5). */
+class PhantomWidget extends WidgetType {
+  constructor(readonly text: string, readonly cls: string) { super(); }
+  eq(other: PhantomWidget) { return other.text === this.text && other.cls === this.cls; }
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = `cm-phantom ${this.cls}`;
+    // Keep on one line, cap length to avoid pathological layouts.
+    const text = this.text.length > 1000 ? this.text.slice(0, 1000) + "…" : this.text;
+    span.textContent = text.replace(/\n/g, "⏎");
+    span.title = text;
+    return span;
+  }
+}
+
+/** Does this segment exist in the edited document (non-phantom)? */
+function isDocSegment(s: Segment): boolean {
+  return !isPhantomSegment(s);
+}
+
 function buildDecoSet(segs: Segment[], mode: "diff" | "user"): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   let pos = 0;
   for (const s of segs) {
     const len = s.text.length;
     if (len === 0) continue;
-    // classifyEdit del/mod-old: only in baseline, NOT in doc — skip phantom
-    const phantom = s.operation === "del" || (s.operation === "mod" && s.side === "old");
-    if (mode === "user") {
-      if (phantom) continue;
-      if (s.operation === "none") { pos += len; continue; }
+    if (isPhantomSegment(s)) {
+      // Phantom consumes no doc space in EITHER mode (rev. A3 — fixes
+      // diff-mode marks landing on wrong offsets after a phantom segment).
+      if (mode === "user") {
+        // Widget at original position for deleted/mod-old (rev. A5/A6)
+        builder.add(pos, pos, Decoration.widget({ widget: new PhantomWidget(s.text, markClass(s)), side: -1 }));
+      }
+      continue;
     }
+    if (s.operation === "none") { pos += len; continue; }
     const cls = markClass(s);
-    if (cls) {
-      builder.add(pos, pos + len, Decoration.mark({ class: cls }));
-    }
+    if (cls) builder.add(pos, pos + len, Decoration.mark({ class: cls }));
     pos += len;
+  }
+  return builder.finish();
+}
+
+/**
+ * Rebuild the ORIGINAL diff layer over the CURRENT (edited) document.
+ *
+ * userSegs is a baseline↔edited diff; 'none' runs map 1:1 by length onto
+ * baseline text.  We walk both streams in lockstep and place original
+ * change marks only on untouched text — user-touched ranges stay blank in
+ * the diff layer (rev. A7).  Called after every successful classify.
+ */
+function rebuildDiffLayer(v: EditorView, userSegs: Segment[]): void {
+  const builder = new RangeSetBuilder<Decoration>();
+  let editedPos = 0;
+  let bi = 0;
+  let bOff = 0;
+
+  for (const s of userSegs) {
+    const len = s.text.length;
+    if (len === 0) continue;
+
+    if (isPhantomSegment(s)) {
+      // Baseline-only text (deleted): consume the base cursor, render nothing.
+      let need = len;
+      while (need > 0 && bi < diffSegmentsRef.length) {
+        const bs = diffSegmentsRef[bi];
+        const avail = bs.text.length - bOff;
+        if (avail <= 0) { bi++; bOff = 0; continue; }
+        const take = Math.min(need, avail);
+        need -= take;
+        bOff += take;
+        if (bOff >= bs.text.length) { bi++; bOff = 0; }
+      }
+      continue;
+    }
+
+    if (s.operation === "none") {
+      // Baseline span maps 1:1 to the doc span.
+      const spanStart = editedPos;
+      let need = len;
+      let placed = 0;
+      while (need > 0 && bi < diffSegmentsRef.length) {
+        const bs = diffSegmentsRef[bi];
+        const avail = bs.text.length - bOff;
+        if (avail <= 0) { bi++; bOff = 0; continue; }
+        const take = Math.min(need, avail);
+        if (!isPhantomSegment(bs) && bs.operation !== "none") {
+          builder.add(spanStart + placed, spanStart + placed + take, Decoration.mark({ class: markClass(bs) }));
+        }
+        placed += take;
+        need -= take;
+        bOff += take;
+        if (bOff >= bs.text.length) { bi++; bOff = 0; }
+      }
+      editedPos = spanStart + len;
+      continue;
+    }
+
+    // add / mod-new: user-inserted text, no baseline footprint.
+    editedPos += len;
+  }
+
+  v.dispatch({ effects: setDiffDecos.of(builder.finish()) });
+}
+
+/** Initial diff layer — doc equals baseline at creation, place marks directly. */
+function buildDiffLayerInitial(): void {
+  const builder = new RangeSetBuilder<Decoration>();
+  let pos = 0;
+  for (const s of diffSegmentsRef) {
+    if (isPhantomSegment(s)) continue;
+    const len = s.text.length;
+    if (len === 0) continue;
+    const cls = markClass(s);
+    if (cls && s.operation !== "none") builder.add(pos, pos + len, Decoration.mark({ class: cls }));
+    pos += len;
+  }
+  view?.dispatch({ effects: setDiffDecos.of(builder.finish()) });
+}
+
+/** Restore the full original diff layer over the untouched doc (rev. A4). */
+function restoreDiffLayer(): void {
+  buildDiffLayerInitial();
+}
+
+/**
+ * Build search-match decorations over the CURRENT document.
+ * Matches come from searchStore (already computed against the edited doc).
+ * Since CM offsets == JS string offsets, we overlay marks directly.
+ */
+function buildSearchDecos(matches: { segmentIndex: number; textOffset: number; length: number }[]): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const m of matches) {
+    const start = m.textOffset;
+    const end = m.textOffset + m.length;
+    if (end > start) builder.add(start, end, Decoration.mark({ class: "cm-search-hl" }));
   }
   return builder.finish();
 }
@@ -77,34 +201,54 @@ function buildDecoSet(segs: Segment[], mode: "diff" | "user"): DecorationSet {
 // ── Editor lifecycle ─────────────────────────────────────────
 function createEditor(text: string, diffSegments: Segment[]) {
   if (view) { view.destroy(); view = null; }
+  diffSegmentsRef = diffSegments;
 
   const state = EditorState.create({
     doc: text || "",
     extensions: [
       diffField,
       userField,
+      searchField,
+      keymap.of([...defaultKeymap, ...historyKeymap]), // rev. A1: undo/redo keybinds
       EditorView.editable.of(true),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
         if (!update.docChanged || !view) return;
         const current = update.state.doc.toString();
-        if (!current || current === lastBaseline) return;
+        if (!current || current === baseline) return;
 
         if (classifyTimer) clearTimeout(classifyTimer);
         classifyTimer = setTimeout(() => {
           const v = view;
           if (!v) return;
           const fresh = v.state.doc.toString();
-          if (!fresh || fresh === lastBaseline) return;
+          if (!fresh || fresh === baseline) return;
 
-          const userResult = classifyEdit(lastBaseline, fresh);
-          if (!userResult.dirty) return;
+          try {
+            // Fixed-baseline reclassification (rev. A2): undo naturally reverts
+            // because we never move the baseline.
+            const userResult = classifyEdit(baseline, fresh);
+            v.dispatch({
+              effects: setUserDecos.of(
+                userResult.dirty ? buildDecoSet(userResult.segments, "user") : Decoration.none,
+              ),
+            });
+            if (userResult.dirty) {
+              // Rev. A7: rebuild the diff layer with user-touched doc ranges excluded,
+              // so the original colors stay blank underneath user edits.
+              rebuildDiffLayer(v, userResult.segments);
+            } else {
+              // Rev. A4: fully undone — restore the untouched original diff layer.
+              restoreDiffLayer();
+            }
 
-          v.dispatch({ effects: setUserDecos.of(buildDecoSet(userResult.segments, "user")) });
-
-          lastBaseline = fresh;
-          editorStore.editText = fresh;
-          editorStore.hasEdits = true;
+            editorStore.editText = fresh;
+            editorStore.hasEdits = userResult.dirty;
+          } catch (e) {
+            // Rev. A10: degrade to no user decorations instead of crashing.
+            console.error("classifyEdit failed", e);
+            v.dispatch({ effects: setUserDecos.of(Decoration.none) });
+          }
         }, 300);
       }),
     ],
@@ -115,8 +259,55 @@ function createEditor(text: string, diffSegments: Segment[]) {
     parent: containerRef.value!,
   });
 
-  // Apply diff decorations after mount
+  // Apply diff decorations after mount (no exclusion yet — user hasn't edited)
   view.dispatch({ effects: setDiffDecos.of(buildDecoSet(diffSegments, "diff")) });
+}
+
+// ci → doc-offset map for edit-mode navigation (rev. A8/E2)
+function buildOffsetMap(): void {
+  segOffsets = [];
+  let pos = 0;
+  let ci = 0;
+  const segs = editorStore.editSegments.length > 0 ? editorStore.editSegments : compareStore.segments;
+  for (const s of segs) {
+    if (!isDocSegment(s)) continue;
+    const len = s.text.length;
+    if (s.ci != null) {
+      ci = s.ci;
+      segOffsets.push({ ci, start: pos, end: pos + len });
+    }
+    pos += len;
+  }
+  // Fallback: if no ci available, index changed segments sequentially
+  if (segOffsets.length === 0) {
+    pos = 0; ci = 0;
+    for (const s of segs) {
+      if (!isDocSegment(s)) { pos += s.text.length; continue; }
+      ci++;
+      segOffsets.push({ ci, start: pos, end: pos + s.text.length });
+      pos += s.text.length;
+    }
+  }
+}
+
+function scrollToCi(ci: number): void {
+  const v = view;
+  if (!v) return;
+  const target = segOffsets.find((o) => o.ci === ci);
+  if (!target) return;
+  v.dispatch({
+    selection: { anchor: target.start },
+    effects: EditorView.scrollIntoView(target.start, { y: "center" }),
+  });
+  v.focus();
+}
+
+// Expose navigation to the page (Sidebar / J-K shortcuts, rev. E3)
+function exposeNavigation(): void {
+  const el = containerRef.value?.closest(".report-main") ?? null;
+  if (!el) return;
+  const ns = el as HTMLElement & { __cmScrollToCi?: (ci: number) => void };
+  ns.__cmScrollToCi = scrollToCi;
 }
 
 watch(
@@ -128,16 +319,40 @@ watch(
     const segs = editorStore.editSegments.length > 0
       ? editorStore.editSegments
       : compareStore.segments;
-    const fullText = segs.map((s: Segment) => s.text).join("");
-    lastBaseline = fullText;
-    editorStore.editText = fullText;
-    createEditor(fullText, segs);
+    baseline = buildDocText(segs);
+    editorStore.editText = baseline;
+    createEditor(baseline, segs);
+    buildOffsetMap();
+    exposeNavigation();
+    // Rev. A9: show search highlights inside the editor if a search is active
+    syncSearchDecos();
   },
+);
+
+// ── Search highlight layer (rev. A9/6-10) ────────────────────
+// Search matches are computed over the current doc; since CM offsets are
+// JS string offsets, we can overlay them directly as marks. Search runs on
+// the EDITED segments (see E1) so this stays in sync with the doc.
+function syncSearchDecos(): void {
+  const v = view;
+  if (!v || !editorStore.isEditing) return;
+  const matches = searchStore.matches;
+  v.dispatch({ effects: setSearchDecos.of(buildSearchDecos(matches)) });
+}
+
+// Watch search state changes while editing (rev. A9)
+watch(
+  () => [searchStore.matches, editorStore.isEditing] as const,
+  () => { syncSearchDecos(); },
 );
 
 onBeforeUnmount(() => {
   if (classifyTimer) clearTimeout(classifyTimer);
   view?.destroy();
+  view = null;
+  // Clean up the exposed navigation hook
+  const el = containerRef.value?.closest(".report-main") ?? null;
+  if (el) delete (el as HTMLElement & { __cmScrollToCi?: unknown }).__cmScrollToCi;
 });
 </script>
 
@@ -186,5 +401,25 @@ onBeforeUnmount(() => {
 
 /* User edit colors — applied as the TOP decoration, so they win */
 .cm-user-add { background: var(--color-user-add-bg); color: var(--color-user-add-text); }
-.cm-user-del { background: var(--color-user-del-bg); color: var(--color-user-del-text); }
+.cm-user-del { background: var(--color-user-del-bg); color: var(--color-user-del-text); text-decoration: line-through; }
+.cm-user-mod-old { background: var(--color-user-mod-old-bg, #fef3c7); color: var(--color-user-mod-old-text, #946b00); text-decoration: line-through; outline: 1px dashed #d4a72c; }
+.cm-user-mod-new { background: var(--color-user-mod-new-bg, #fef3c7); color: var(--color-user-mod-new-text, #946b00); font-weight: 600; outline: 1px solid #d4a72c; }
+
+/* Phantom widget (deleted/mod-old text shown at its original spot) */
+.cm-phantom {
+  text-decoration: line-through;
+  border-radius: 3px;
+  padding: 0 2px;
+  margin: 0 1px;
+}
+.cm-phantom.cm-user-del { background: var(--color-user-del-bg); color: var(--color-user-del-text); }
+.cm-phantom.cm-user-mod-old { background: var(--color-user-mod-old-bg, #fef3c7); color: var(--color-user-mod-old-text, #946b00); outline: 1px dashed #d4a72c; }
+.cm-phantom.cm-del { background: var(--color-del-bg); color: var(--color-del-text); }
+.cm-phantom.cm-mod-old { background: var(--color-mod-old-bg); color: var(--color-mod-old-text); }
+
+/* Search highlight inside the editor (rev. A9) */
+.cm-search-hl {
+  background: var(--color-search-highlight);
+  outline: 1px solid var(--color-focus-border);
+}
 </style>
