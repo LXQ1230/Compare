@@ -19,6 +19,9 @@ const HEALTH_TIMEOUT_MS = 5_000;
 /** Upper bound for the entire compare flow (upload + stream). */
 const COMPARE_TIMEOUT_MS = 120_000;
 
+/** Default timeout for autosave/version endpoints (rev. F3 — they were bare fetch()). */
+const API_TIMEOUT_MS = 10_000;
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -172,7 +175,7 @@ export const api = {
     await raceWithTimeout(worker, COMPARE_TIMEOUT_MS + 5_000, undefined);
   },
 
-  // ── autosave / versions (unchanged logic) ────────────────────────────────
+  // ── autosave / versions (rev. F3: all through fetchWithTimeout) ──────────
 
   async autosave(payload: {
     action: 'save' | 'load' | 'delete';
@@ -181,10 +184,11 @@ export const api = {
     html?: string;
     time?: number;
   }): Promise<Record<string, unknown>> {
-    const res = await fetch(`${BASE}/autosave`, {
+    const res = await fetchWithTimeout(`${BASE}/autosave`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      timeoutMs: API_TIMEOUT_MS,
     });
     if (!res.ok) throw new Error(`Autosave failed: ${res.status}`);
     return res.json() as Promise<Record<string, unknown>>;
@@ -196,23 +200,30 @@ export const api = {
     file_b_content: string;
     stats: Record<string, number>;
   }): Promise<{ status: string; id: string }> {
-    const res = await fetch(`${BASE}/versions/save`, {
+    const res = await fetchWithTimeout(`${BASE}/versions/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      timeoutMs: API_TIMEOUT_MS,
     });
     if (!res.ok) throw new Error(`Version save failed: ${res.status}`);
     return res.json() as Promise<{ status: string; id: string }>;
   },
 
   async versionList(): Promise<{ status: string; versions: Record<string, unknown>[] }> {
-    const res = await fetch(`${BASE}/versions/list`);
+    const res = await fetchWithTimeout(`${BASE}/versions/list`, {
+      method: 'GET',
+      timeoutMs: API_TIMEOUT_MS,
+    });
     if (!res.ok) throw new Error(`Version list failed: ${res.status}`);
     return res.json() as Promise<{ status: string; versions: Record<string, unknown>[] }>;
   },
 
   async versionRestore(id: string): Promise<{ status: string; version: Record<string, unknown> }> {
-    const res = await fetch(`${BASE}/versions/restore/${id}`, { method: 'POST' });
+    const res = await fetchWithTimeout(`${BASE}/versions/restore/${id}`, {
+      method: 'POST',
+      timeoutMs: API_TIMEOUT_MS,
+    });
     if (!res.ok) throw new Error(`Version restore failed: ${res.status}`);
     return res.json() as Promise<{ status: string; version: Record<string, unknown> }>;
   },

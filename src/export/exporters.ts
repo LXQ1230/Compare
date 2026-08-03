@@ -64,12 +64,18 @@ function escapeAttr(s: string): string {
 export function exportToMD(segments: Segment[]): string {
   const mdEscape = (s: string): string =>
     s.replace(/([\\*_{}\[\]()#+\-.!|~`])/g, '\\$1');
+  // Rev. F2: strip HTML tags BEFORE markdown escaping. `mdEscape` does not
+  // escape `<`/`>`, so a raw `<script>` in the document would survive into
+  // the exported .md and execute when opened in a markdown viewer that
+  // renders embedded HTML.
+  const stripHtml = (s: string): string => s.replace(/<[^>]*>/g, '');
   const parts: string[] = [];
   for (const s of segments) {
-    if (s.operation === 'add') parts.push(`++${mdEscape(s.text)}++`);
-    else if (s.operation === 'del') parts.push(`~~${mdEscape(s.text)}~~`);
-    else if (s.operation === 'mod') parts.push(`**${mdEscape(s.text)}**`);
-    else parts.push(mdEscape(s.text));
+    const text = stripHtml(s.text);
+    if (s.operation === 'add') parts.push(`++${mdEscape(text)}++`);
+    else if (s.operation === 'del') parts.push(`~~${mdEscape(text)}~~`);
+    else if (s.operation === 'mod') parts.push(`**${mdEscape(text)}**`);
+    else parts.push(mdEscape(text));
   }
   return parts.join('');
 }
