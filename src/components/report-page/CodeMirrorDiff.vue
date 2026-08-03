@@ -3,7 +3,7 @@ import { ref, watch, onBeforeUnmount, nextTick } from "vue";
 import { EditorView, Decoration, DecorationSet, WidgetType } from "@codemirror/view";
 import { EditorState, StateEffect, StateEffectType, StateField, RangeSetBuilder, type Extension } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
-import { defaultKeymap, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, historyKeymap, history } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { useCompareStore } from "../../stores/compare";
 import { useEditorStore } from "../../stores/editor";
@@ -34,6 +34,11 @@ function makeField(effect: StateEffectType<DecorationSet>) {
   return StateField.define<DecorationSet>({
     create: () => Decoration.none,
     update: (val, tr) => {
+      // CRITICAL: map stored decorations through the transaction's changes.
+      // Without this, a large doc replacement (paste/fill) leaves the field
+      // holding positions beyond the new doc length, and CM's RangeSet
+      // comparison throws "Position N is out of range for changeset".
+      val = val.map(tr.changes);
       for (const e of tr.effects) if (e.is(effect)) val = e.value;
       return val;
     },
@@ -272,6 +277,7 @@ function ensureEditor() {
       userField,
       searchField,
       keymap.of([...defaultKeymap, ...historyKeymap]), // rev. A1: undo/redo keybinds
+      history(), // CRITICAL: history() extension enables undo — historyKeymap alone is a no-op
       EditorView.editable.of(true),
       EditorView.lineWrapping,
       ...languageExtensions(), // rev. B4: markdown syntax highlighting
