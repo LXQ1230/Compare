@@ -1,5 +1,6 @@
 import os
 from src_backend.errors import AppError, Severity
+from src_backend.parsers.txt_parser import normalize_newlines
 
 ZIP_MAGIC = b"PK\x03\x04"
 

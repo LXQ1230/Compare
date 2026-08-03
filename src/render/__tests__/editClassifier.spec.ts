@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyEdit, isPhantomSegment, buildDocText } from '@/render/editClassifier';
+import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings } from '@/render/editClassifier';
 import { renderSegmentsToHTML } from '@/render/segmentRenderer';
 import type { Segment } from '@/types';
 
@@ -90,6 +90,49 @@ describe('classifyEdit', () => {
     // buildDocText drops phantom segments
     const nonPhantom = r.segments.filter((s) => !isPhantomSegment(s));
     expect(buildDocText(r.segments)).toBe(nonPhantom.map((s) => s.text).join(''));
+  });
+
+  it('CRLF baseline vs LF editor doc produces NO phantom CR deletions (root cause regression)', () => {
+    // Root-cause regression (rev. F2): a Windows CRLF baseline must NOT
+    // produce per-character '\r' deletions when the editor doc has no '\r'.
+    // CodeMirror 6 splits on /\r\n?|\n/ (DefaultSplit), so '\r' never
+    // survives into the document. The fix normalizes the baseline at the
+    // editor boundary (normalizeLineEndings) before classifyEdit runs.
+    const rawBaseline = '第一行内容\r\n第二行内容\r\n第三行内容';
+    const baseline = normalizeLineEndings(rawBaseline);
+    expect(baseline).toBe('第一行内容\n第二行内容\n第三行内容');
+    const edited = '第一行内容\n第二行内容\n第三行内容\n末尾追加';
+    const r = classifyEdit(baseline, edited);
+    expect(r.dirty).toBe(true);
+    // Every non-phantom segment must be CR-free — no phantom '\r' deletions.
+    for (const s of r.segments) {
+      if (!isPhantomSegment(s)) expect(s.text).not.toContain('\r');
+    }
+    // Reconstructed doc must match the editor doc exactly.
+    expect(buildDocText(r.segments)).toBe(edited);
+    // There should be exactly ONE real add (the appended line), not 3 phantom CR dels.
+    // The add may legitimately include the preceding '\n' (baseline didn't end
+    // with a newline), but must not contain '\r'.
+    const adds = r.segments.filter((s) => s.operation === 'add');
+    expect(adds).toHaveLength(1);
+    expect(adds[0].text).not.toContain('\r');
+    expect(adds[0].text).toContain('末尾追加');
+  });
+
+  it('normalizeLineEndings converts CRLF and CR to LF', () => {
+    expect(normalizeLineEndings('a\r\nb\rc\nd')).toBe('a\nb\nc\nd');
+    expect(normalizeLineEndings('a\r\nb')).toBe('a\nb');
+    expect(normalizeLineEndings('a\rb')).toBe('a\nb');
+    expect(normalizeLineEndings('a\nb')).toBe('a\nb'); // already LF — unchanged
+    expect(normalizeLineEndings('')).toBe('');
+  });
+
+  it('CR-only baseline lines normalize: CRLF and LF forms classify identically', () => {
+    const crlf = classifyEdit('a\r\nb', 'a\nb!');
+    const lf = classifyEdit('a\nb', 'a\nb!');
+    expect(buildDocText(crlf.segments)).toBe(buildDocText(lf.segments));
+    expect(crlf.segments.filter((s) => s.operation === 'add')).toHaveLength(1);
+    expect(lf.segments.filter((s) => s.operation === 'add')).toHaveLength(1);
   });
 });
 

@@ -1,6 +1,13 @@
 import chardet
 from src_backend.errors import AppError, Severity
 
+# Windows/macOS legacy line endings → LF. CodeMirror 6 drops '\r' from its
+# document model (DefaultSplit = /\r\n?|\n/), so any '\r' surviving into
+# the diff baseline would be misclassified as phantom deletions once the
+# user edits. Normalize at parse time so baselines are always CR-free.
+def normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
 
 def _detect_bom(data: bytes) -> str | None:
     """检测 BOM 并返回对应编码，无 BOM 返回 None。"""
@@ -24,11 +31,11 @@ def parse_txt(file_path: str) -> str:
     # 1. BOM 检测
     bom_encoding = _detect_bom(raw)
     if bom_encoding:
-        return raw.decode(bom_encoding).lstrip("\ufeff")
+        return normalize_newlines(raw.decode(bom_encoding).lstrip("\ufeff"))
 
     # 2. UTF-8 严格解码
     try:
-        return raw.decode("utf-8")
+        return normalize_newlines(raw.decode("utf-8"))
     except UnicodeDecodeError:
         pass
 
@@ -45,7 +52,7 @@ def parse_txt(file_path: str) -> str:
         )
 
     try:
-        return raw.decode(encoding)
+        return normalize_newlines(raw.decode(encoding))
     except (UnicodeDecodeError, LookupError):
         raise AppError(
             Severity.BLOCKING,

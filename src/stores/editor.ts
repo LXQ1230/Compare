@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { Segment, ChangeContext } from "@/types";
 import { useCompareStore } from "./compare";
-import { classifyEdit, buildDocText } from "@/render/editClassifier";
+import { classifyEdit, buildDocText, normalizeLineEndings } from "@/render/editClassifier";
 
 function cloneSegments(src: Segment[]): Segment[] {
   return src.map((s) => ({ ...s }));
@@ -41,8 +41,8 @@ export const useEditorStore = defineStore("editor", () => {
   function enterEdit(): void {
     if (!hasEdits.value) {
       editSegments.value = cloneSegments(compareStore.segments);
-      editText.value = buildDocText(editSegments.value);
-      originalBaseline.value = buildDocText(compareStore.segments);
+      editText.value = normalizeLineEndings(buildDocText(editSegments.value));
+      originalBaseline.value = normalizeLineEndings(buildDocText(compareStore.segments));
     }
     isEditing.value = true;
   }
@@ -60,8 +60,9 @@ export const useEditorStore = defineStore("editor", () => {
 
   /** Classify current edits against the FIXED baseline (rev. A2). */
   function getEditedSegments(): Segment[] {
-    if (editText.value === originalBaseline.value) return [];
-    return classifyEdit(originalBaseline.value, editText.value).segments;
+    const edited = normalizeLineEndings(editText.value);
+    if (edited === originalBaseline.value) return [];
+    return classifyEdit(originalBaseline.value, edited).segments;
   }
 
   const editedStats = computed(() => {

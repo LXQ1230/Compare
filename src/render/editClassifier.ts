@@ -27,6 +27,19 @@ export function buildDocText(segs: Segment[]): string {
 }
 
 /**
+ * Normalize Windows/macOS line endings to LF.
+ *
+ * CodeMirror 6 splits documents on /\r\n?|\n/ (DefaultSplit) and never
+ * keeps '\r' in the doc.  If a baseline built from backend segments
+ * still contains CRLF/CR (e.g. Windows-exported txt), classifyEdit
+ * would see every '\r' as a phantom deletion.  Normalize baselines at
+ * the same boundary so classifier input always matches editor docs.
+ */
+export function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+/**
  * Diff `baseline` against `edited` at character level and produce
  * user-origin segments suitable for `renderSegmentsToHTML`.
  */

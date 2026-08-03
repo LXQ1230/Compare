@@ -8,7 +8,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { useCompareStore } from "../../stores/compare";
 import { useEditorStore } from "../../stores/editor";
 import { useSearchStore } from "../../stores/search";
-import { classifyEdit, isPhantomSegment, buildDocText } from "../../render/editClassifier";
+import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings } from "../../render/editClassifier";
 import { searchInSegments } from "../../utils/search";
 import type { Segment } from "@/types";
 
@@ -247,10 +247,10 @@ function ensureEditor() {
   const segs = editorStore.editSegments.length > 0
     ? editorStore.editSegments
     : compareStore.segments;
-  baseline = buildDocText(segs);
+  baseline = normalizeLineEndings(buildDocText(segs));
   cachedDocFingerprint = baseline;
   editorStore.editText = baseline;
-  diffSegmentsRef = segs;
+  diffSegmentsRef = segs.map((s) => ({ ...s, text: normalizeLineEndings(s.text) }));
 
   // Rev. D1/6-5: synchronous flush — run classify immediately so export
   // reads content that is never behind the cursor (debounce bypassed).
@@ -397,7 +397,7 @@ watch(
     const segs = editorStore.editSegments.length > 0
       ? editorStore.editSegments
       : compareStore.segments;
-    const freshBaseline = buildDocText(segs);
+    const freshBaseline = normalizeLineEndings(buildDocText(segs));
     // Rev. C3 guard: a NEW comparison produces different baseline text.
     // The cached view cannot be reused (its doc/history belong to the old
     // document), so tear it down and rebuild from scratch.

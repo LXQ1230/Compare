@@ -1,4 +1,5 @@
 import re
+from src_backend.parsers.txt_parser import normalize_newlines
 
 
 def parse_md(text: str) -> str:
@@ -58,4 +59,4 @@ def parse_md(text: str) -> str:
     text = re.sub(r"^[ \t]+", "", text, flags=re.MULTILINE)
     text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
 
-    return text.strip()
+    return normalize_newlines(text.strip())
