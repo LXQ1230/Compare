@@ -22,8 +22,17 @@ const emptyText = computed(() =>
 </script>
 
 <template>
-  <div v-if="emptyText" class="empty-notice">{{ emptyText }}</div>
-  <div v-else class="unified-view" v-html="htmlContent" />
+  <!-- Rev. 5-21: a11y — status region announces the empty state; the diff
+       document is focusable (tabindex=0) so keyboard users can scroll it. -->
+  <div v-if="emptyText" role="status" class="empty-notice">{{ emptyText }}</div>
+  <div
+    v-else
+    class="unified-view"
+    role="document"
+    aria-label="对比结果（统一视图）"
+    tabindex="0"
+    v-html="htmlContent"
+  />
 </template>
 
 <style scoped>

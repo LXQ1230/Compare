@@ -201,3 +201,155 @@ class TestCompareEndpoint:
         assert response.status_code == 200
         parsed = self._parse_ndjson(response.text)
         assert parsed[-1]["type"] == "done"
+
+    # ── CJK / Unicode robustness (rev. 5-16 + 三期 4-12) ───────────────
+
+    def test_compare_chinese_filenames_and_content(self, client, tmp_path):
+        """中文文件名 + 中文内容上传对比端到端正确（rev. 5-16 回归）。
+
+        中文文件名在 multipart 中按 UTF-8 传输（无需前端 encodeURIComponent——
+        那反而会把名字变成 %XX 乱码，后端也没有 unquote）。扩展名校验只依赖
+        ASCII 后缀，不受中文名影响。
+        """
+        a_file = tmp_path / "佛经原文.txt"
+        b_file = tmp_path / "佛经校订.txt"
+        a_file.write_text("如是我闻。一时佛在舍卫国。", encoding="utf-8")
+        b_file.write_text("如是我闻。一时佛在祇园精舍。", encoding="utf-8")
+
+        response = client.post(
+            "/api/compare",
+            files={
+                "fileA": ("佛经原文.txt", a_file.read_bytes(), "text/plain"),
+                "fileB": ("佛经校订.txt", b_file.read_bytes(), "text/plain"),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        parsed = self._parse_ndjson(response.text)
+        assert parsed[-1]["type"] == "done"
+        # 至少产出差异段（含 add/del 或 mod）
+        segs = [m for m in parsed if m["type"] == "segments"]
+        texts = [s["text"] for m in segs for s in m["data"]]
+        assert any("舍卫国" in t or "祇园精舍" in t for t in texts)
+
+    def test_compare_cjk_extension_b_characters(self, client, tmp_path):
+        """CJK Extension B（surrogate pair 编码的扩展汉字）diff 不产生错位。
+
+        扩展汉字（如 𠀀 U+20000）在 UTF-8 中是 4 字节、UTF-16 中是代理对。
+        后端 diff 使用 Python 原生 str（code point 级别），天然安全；
+        此测试防止未来误用字节级/UTF-16 级处理引入回归。
+        """
+        a_file = tmp_path / "a.txt"
+        b_file = tmp_path / "b.txt"
+        # 前后缀一致，仅中间扩展汉字不同 → 应产出干净的 mod 段
+        a_file.write_text("序言\u4e00\u4e8c\u4e09𠀀\u4e94\u516d\u4e03。", encoding="utf-8")
+        b_file.write_text("序言\u4e00\u4e8c\u4e09𠮟\u4e94\u516d\u4e03。", encoding="utf-8")
+
+        response = client.post(
+            "/api/compare",
+            files={
+                "fileA": ("a.txt", a_file.read_bytes()),
+                "fileB": ("b.txt", b_file.read_bytes()),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        parsed = self._parse_ndjson(response.text)
+        assert parsed[-1]["type"] == "done"
+        # 文本往返无损坏：还原后 A/B 文本应等于输入
+        rebuilt_a = ""
+        rebuilt_b = ""
+        for m in parsed:
+            if m["type"] != "segments":
+                continue
+            for s in m["data"]:
+                if s["operation"] == "add":
+                    rebuilt_b += s["text"]
+                elif s["operation"] == "del":
+                    rebuilt_a += s["text"]
+                elif s["operation"] == "mod":
+                    if s.get("side") == "old":
+                        rebuilt_a += s["text"]
+                    else:
+                        rebuilt_b += s["text"]
+                else:
+                    rebuilt_a += s["text"]
+                    rebuilt_b += s["text"]
+        assert rebuilt_a == "序言\u4e00\u4e8c\u4e09𠀀\u4e94\u516d\u4e03。"
+        assert rebuilt_b == "序言\u4e00\u4e8c\u4e09𠮟\u4e94\u516d\u4e03。"
+
+    def test_compare_zero_width_and_nbsp(self, client, tmp_path):
+        """零宽字符与 NBSP 在 diff 中不被吞掉、不干扰段边界。"""
+        a_file = tmp_path / "a.txt"
+        b_file = tmp_path / "b.txt"
+        a_file.write_text("正\u200b文一\u00a0段", encoding="utf-8")
+        b_file.write_text("正\u200b文二\u00a0段", encoding="utf-8")
+
+        response = client.post(
+            "/api/compare",
+            files={
+                "fileA": ("a.txt", a_file.read_bytes()),
+                "fileB": ("b.txt", b_file.read_bytes()),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        parsed = self._parse_ndjson(response.text)
+        assert parsed[-1]["type"] == "done"
+        # 零宽/NBSP 字符应在 segment 文本中原样保留
+        all_text = "".join(
+            s["text"]
+            for m in parsed
+            if m["type"] == "segments"
+            for s in m["data"]
+        )
+        assert "\u200b" in all_text
+        assert "\u00a0" in all_text
+
+    def test_compare_empty_file_vs_content(self, client, tmp_path):
+        """空文件 vs 有内容（rev. 3-11 边界）：整段内容应标记为 add 且不崩溃。"""
+        a_file = tmp_path / "empty.txt"
+        b_file = tmp_path / "content.txt"
+        a_file.write_text("", encoding="utf-8")
+        b_file.write_text("全文内容\n第二行。", encoding="utf-8")
+
+        response = client.post(
+            "/api/compare",
+            files={
+                "fileA": ("empty.txt", a_file.read_bytes()),
+                "fileB": ("content.txt", b_file.read_bytes()),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        parsed = self._parse_ndjson(response.text)
+        assert parsed[-1]["type"] == "done"
+        # 应产出 add 段（B 全部新增），文本往返一致
+        rebuilt_b = ""
+        for m in parsed:
+            if m["type"] != "segments":
+                continue
+            for s in m["data"]:
+                if s["operation"] == "del":
+                    continue  # 空文件没有 del
+                rebuilt_b += s["text"]
+        assert rebuilt_b == "全文内容\n第二行。"
+
+    def test_compare_both_empty_files(self, client, tmp_path):
+        """两个空文件（rev. 3-11）：无差异、正常完成。"""
+        a_file = tmp_path / "a.txt"
+        b_file = tmp_path / "b.txt"
+        a_file.write_text("", encoding="utf-8")
+        b_file.write_text("", encoding="utf-8")
+
+        response = client.post(
+            "/api/compare",
+            files={
+                "fileA": ("a.txt", a_file.read_bytes()),
+                "fileB": ("b.txt", b_file.read_bytes()),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        parsed = self._parse_ndjson(response.text)
+        assert parsed[-1]["type"] == "done"

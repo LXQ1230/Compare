@@ -67,7 +67,8 @@ export const useCompareStore = defineStore('compare', () => {
         error: true,
         severity: 'blocking',
         title: '后端未启动',
-        message: '无法连接到后端服务。请先启动后端： python -m uvicorn src_backend.main:app --host 127.0.0.1 --port 17890',
+        // Rev. 5-17: point users at the one-click launcher instead of raw CLI.
+        message: '无法连接到后端服务。请运行 start.bat 启动后端后重试。',
         detail: null,
       };
       isComparing.value = false;

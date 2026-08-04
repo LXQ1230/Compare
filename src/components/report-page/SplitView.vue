@@ -8,10 +8,11 @@ const splitHtml = computed(() => renderSplitColumns(compareStore.segments));
 </script>
 
 <template>
+  <!-- Rev. 5-21: a11y — both panes focusable for keyboard scroll. -->
   <div class="split-view">
-    <div class="split-pane" v-html="splitHtml.left" />
-    <div class="split-gutter" />
-    <div class="split-pane" v-html="splitHtml.right" />
+    <div class="split-pane" role="document" aria-label="对比结果（文件 A 原始）" tabindex="0" v-html="splitHtml.left" />
+    <div class="split-gutter" role="separator" aria-hidden="true" />
+    <div class="split-pane" role="document" aria-label="对比结果（文件 B 修改）" tabindex="0" v-html="splitHtml.right" />
   </div>
 </template>
 

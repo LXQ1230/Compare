@@ -28,6 +28,14 @@ const inputB = ref<HTMLInputElement | null>(null);
 const MAX_BYTES = 15 * 1024 * 1024;
 const sizeWarnings = ref<{ a: string; b: string }>({ a: '', b: '' });
 
+// ── 扩展名校验（rev. 5-14：前端体验层；后端 _validate_upload 二次兜底）──
+const VALID_EXT_RE = /\.(txt|docx|md)$/i;
+const EXT_LABEL = '.txt / .docx / .md';
+
+function isValidExt(f: File | null): boolean {
+  return !!f && VALID_EXT_RE.test(f.name);
+}
+
 function checkSize(f: File | null): string {
   if (!f) return '';
   if (f.size > MAX_BYTES) return 'error';
@@ -131,21 +139,36 @@ function removeDraft(key: string, e: Event): void {
 
 function handleFiles(files: File[]) {
   error.value = '';
-  if (files.length >= 1) fileA.value = files[0];
-  if (files.length >= 2) fileB.value = files[1];
+  // Rev. 5-14: reject unsupported extensions up front with a clear message.
+  const valid = files.filter(isValidExt);
+  if (valid.length !== files.length) {
+    error.value = `不支持的文件格式（仅支持 ${EXT_LABEL}），已忽略不合规文件`;
+  }
+  if (valid.length >= 1) fileA.value = valid[0];
+  if (valid.length >= 2) fileB.value = valid[1];
   refreshSizeWarnings();
 }
 
 function handleFileAChange(e: Event) {
   const input = e.target as HTMLInputElement;
-  if (input.files?.[0]) fileA.value = input.files[0];
+  const f = input.files?.[0] ?? null;
+  if (!isValidExt(f)) {
+    error.value = `不支持的文件格式（仅支持 ${EXT_LABEL}）`;
+    return;
+  }
+  fileA.value = f;
   error.value = '';
   refreshSizeWarnings();
 }
 
 function handleFileBChange(e: Event) {
   const input = e.target as HTMLInputElement;
-  if (input.files?.[0]) fileB.value = input.files[0];
+  const f = input.files?.[0] ?? null;
+  if (!isValidExt(f)) {
+    error.value = `不支持的文件格式（仅支持 ${EXT_LABEL}）`;
+    return;
+  }
+  fileB.value = f;
   error.value = '';
   refreshSizeWarnings();
 }
@@ -162,6 +185,11 @@ function swapFiles() {
 async function startCompare() {
   if (!fileA.value || !fileB.value) {
     error.value = '请选择两个文件';
+    return;
+  }
+  // Rev. 5-14: double-check extension at the start button too.
+  if (!isValidExt(fileA.value) || !isValidExt(fileB.value)) {
+    error.value = `不支持的文件格式（仅支持 ${EXT_LABEL}）`;
     return;
   }
   // 超大文件阻止（方案 L0/XL）
