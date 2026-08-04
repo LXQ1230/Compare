@@ -44,7 +44,11 @@ defineEmits<{ export: [] }>();
         {{ compareStore.fileAName }} ↔ {{ compareStore.fileBName }}
       </span>
       <span class="stats-badge" v-if="compareStore.stats.total > 0">
-        {{ compareStore.stats.total }} 处变更
+        <!-- 三期 A 组（2-7）：编辑模式切换为编辑后统计（含已恢复） -->
+        {{ editorStore.isEditing ? editorStore.editedStats.total : compareStore.stats.total }} 处变更
+      </span>
+      <span v-if="editorStore.isEditing && editorStore.editedStats.restored > 0" class="stats-badge restored-badge">
+        ✓ {{ editorStore.editedStats.restored }} 处已恢复
       </span>
     </div>
     <div class="toolbar-right">
@@ -90,6 +94,8 @@ defineEmits<{ export: [] }>();
   font-size: 12px; background: var(--color-focus-border); color: #fff;
   padding: 2px 8px; border-radius: 10px;
 }
+/* 三期 A 组：已恢复原文徽标（绿色） */
+.restored-badge { background: var(--color-user-restored-text); }
 .toolbar-right { display: flex; gap: 6px; }
 .tb-btn {
   padding: 6px 12px; font-size: 13px; border: 1px solid var(--color-border);

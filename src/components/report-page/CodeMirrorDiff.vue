@@ -11,6 +11,7 @@ import { useSearchStore } from "../../stores/search";
 import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings } from "../../render/editClassifier";
 import { normalizeText } from "../../render/unicode";
 import { mergeSegments } from "../../render/incrementalClassify";
+import { buildBToAMap, detectRestores, type BToAMap } from "../../render/restoreDetector";
 import { classifyInWorker, resetWorkerSession } from "../../utils/classifyWorker";
 import { searchInSegments } from "../../utils/search";
 import type { Segment } from "@/types";
@@ -62,6 +63,8 @@ let editVersion = 0;
  * CM6 的 history() 无 maxDepth 参数，采用"超限即清空历史"策略——doc 不变，
  * 仅丢弃最旧的 undo 记录，防百万字文档 history ChangeSet 内存膨胀。 */
 const MAX_UNDO_DEPTH = 500;
+/** 三期 A 组：B 偏移 → A 内容映射（恢复检测用）。全角归一半开时置 null 跳过。 */
+let bToAMap: BToAMap | null = null;
 /** 压缩重建时的 state extensions（模块级保存，供 EditorState.create 复用）。 */
 let editorExtensions: Extension[] = [];
 /** editable 初始配置（只读查看态），压缩重建时按当前状态替换为对应配置。 */
@@ -100,6 +103,8 @@ const bookmarkField = makeField(setBookmarkDecos);
 
 // ── Helpers ──────────────────────────────────────────────────
 function markClass(s: Segment): string {
+  // 三期 A 组：恢复段统一绿色（已回到原文），含 mod 对的 old/new 两侧
+  if (s.origin === "restored") return "cm-user-restored";
   if (s.origin === "user") {
     if (s.operation === "add") return "cm-user-add";
     if (s.operation === "del") return "cm-user-del";
@@ -407,6 +412,12 @@ function applyClassifyResult(
   } else {
     merged = userResult.segments ?? [];
   }
+  // 三期 A 组：恢复检测——把用户改回原文的段标记为 restored（绿色）。
+  // 增量路径的 merged 已是完整段（窗口外保留上次检测结果），全量检测成本
+  // O(修改段数)，与文档规模解耦。
+  if (bToAMap && merged.length > 0) {
+    merged = detectRestores(merged, bToAMap).segs;
+  }
 
   v.dispatch({
     effects: setUserDecos.of(merged.length > 0 ? buildDecoSet(merged) : Decoration.none),
@@ -497,6 +508,9 @@ function ensureEditor() {
   const initialDoc = hasDraft ? editorStore.editText : baseline;
   editorStore.editText = initialDoc;
   diffSegmentsRef = segs.map((s) => ({ ...s, text: normalizeText(s.text) }));
+  // 三期 A 组：B→A 映射基于与 baseline 同变换的段（normalizeText）。
+  // 全角归一半开时 baseline 是 fullwidth 化文本，与映射偏移不一致 → 跳过检测。
+  bToAMap = editorStore.fullwidthHalfwidth ? null : buildBToAMap(diffSegmentsRef);
   buildDiffSegMap();  // rev. A11: pre-compute baseline offsets for diff-layer rebuilds
 
   // Rev. D1/6-5: synchronous flush — run classify immediately so export

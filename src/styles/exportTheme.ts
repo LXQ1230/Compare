@@ -30,6 +30,9 @@ export const themeVars: Record<string, string> = {
   '--color-user-mod-old-text': '#946b00',
   '--color-user-mod-new-bg': '#fef3c7',
   '--color-user-mod-new-text': '#946b00',
+  // 三期 A 组：恢复段（用户改回原文）
+  '--color-user-restored-bg': '#e6ffec',
+  '--color-user-restored-text': '#116329',
   '--color-search-highlight': '#fff9c4',
   '--color-search-focus': '#fff3cd',
   '--color-focus-border': '#0969da',
@@ -57,6 +60,7 @@ const segRules = [
   '.seg-user-del{background:var(--color-user-del-bg);color:var(--color-user-del-text);text-decoration:line-through}',
   '.seg-user-mod-old{background:var(--color-user-mod-old-bg);color:var(--color-user-mod-old-text);text-decoration:line-through}',
   '.seg-user-mod-new{background:var(--color-user-mod-new-bg);color:var(--color-user-mod-new-text);font-weight:600}',
+  '.seg-user-restored{background:var(--color-user-restored-bg);color:var(--color-user-restored-text)}',
   '.seg-none{background:transparent;color:var(--color-text)}',
   '.ci-flash{animation:ci-flash-anim 0.6s ease-out 2}',
   '@keyframes ci-flash-anim{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 4px var(--color-focus-border)}}',

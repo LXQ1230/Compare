@@ -28,6 +28,8 @@ const PINNED_VARS: Record<string, string> = {
   '--color-user-mod-old-text': '#946b00',
   '--color-user-mod-new-bg': '#fef3c7',
   '--color-user-mod-new-text': '#946b00',
+  '--color-user-restored-bg': '#e6ffec',
+  '--color-user-restored-text': '#116329',
   '--color-search-highlight': '#fff9c4',
   '--color-search-focus': '#fff3cd',
   '--color-focus-border': '#0969da',

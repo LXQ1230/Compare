@@ -326,14 +326,15 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   const editedStats = computed(() => {
-    let total = 0, add = 0, del = 0, mod = 0;
+    let total = 0, add = 0, del = 0, mod = 0, restored = 0;
     for (const s of getEditedSegments()) {
       total++;
+      if (s.origin === "restored") restored++;
       if (s.operation === "add") add++;
       else if (s.operation === "del") del++;
       else if (s.operation === "mod") mod++;
     }
-    return { total, add, del, mod };
+    return { total, add, del, mod, restored };
   });
 
   /** Sidebar change contexts rebuilt from the edited segments. */

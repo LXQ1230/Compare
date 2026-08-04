@@ -83,6 +83,12 @@ function handleClick(ci: number): void {
         </span>
       </div>
 
+      <!-- 三期 A 组：已恢复原文统计（绿色） -->
+      <div v-if="editorStore.isEditing && editorStore.editedStats.restored > 0" class="edit-progress restored-hint">
+        <span class="progress-label">已恢复原文</span>
+        <span class="progress-count">{{ editorStore.editedStats.restored }} 处</span>
+      </div>
+
       <!-- Minimap -->
       <div class="minimap-section">
         <h4 class="section-title">变更分布</h4>
@@ -169,6 +175,10 @@ function handleClick(ci: number): void {
 }
 .progress-label { font-weight: 600; color: var(--color-text-secondary); }
 .progress-count { font-weight: 700; color: var(--color-focus-border); }
+/* 三期 A 组：已恢复原文（绿色） */
+.restored-hint { background: var(--color-user-restored-bg); }
+.restored-hint .progress-label { color: var(--color-user-restored-text); }
+.restored-hint .progress-count { color: var(--color-user-restored-text); }
 
 /* ── change list ────────────────────────────────────────── */
 .change-list { max-height: calc(100vh - 280px); overflow-y: auto; }

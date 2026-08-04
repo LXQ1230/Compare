@@ -71,6 +71,10 @@ html, body {
   text-decoration: none;
   font-weight: 600;
 }
+/* 三期 A 组：恢复段（用户改回原文） */
+.seg-user-restored { background: var(--color-user-restored-bg); color: var(--color-user-restored-text); }
+.cm-user-restored { background: var(--color-user-restored-bg) !important; color: var(--color-user-restored-text) !important; }
+.cm-user-restored.cm-phantom { text-decoration: line-through; }
 
 .seg-none {
   background: transparent;

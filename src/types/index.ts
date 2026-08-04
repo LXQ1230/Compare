@@ -20,7 +20,13 @@ export interface DiffOp {
 
 export type SegmentOp = 'add' | 'del' | 'mod' | 'none'
 
-export type SegmentOrigin = 'original' | 'user'
+/**
+ * 段来源（三期 A 组恢复检测器新增 'restored'）：
+ * - original: 后端对比产生的原始差异
+ * - user: 用户在编辑模式产生的修改
+ * - restored: 用户把 B 的内容改回原文 A（detectRestores 判定），视觉用绿色
+ */
+export type SegmentOrigin = 'original' | 'user' | 'restored'
 
 /** 文档规模分级（方案 L0）：S≤10万 / M≤50万 / L≤500万 / XL>500万 */
 export type ScaleLevel = 'S' | 'M' | 'L' | 'XL'
@@ -64,6 +70,11 @@ export interface CompareStats {
   add: number
   del: number
   mod: number
+}
+
+/** 编辑态统计（三期 A 组）：在 CompareStats 之上增加 restored 计数。 */
+export interface EditedStats extends CompareStats {
+  restored: number
 }
 
 export type StreamMessage =
