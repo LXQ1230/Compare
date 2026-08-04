@@ -41,6 +41,21 @@ function promisify<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
+/**
+ * 事务 promise 化（rev. 三期 A 组 P0 修复）。
+ * IDBTransaction 的事件是 oncomplete/onerror/onabort——给 tx 挂
+ * onsuccess/onerror 是无效的（promise 永久 pending）。此前 put/putAll/
+ * delete/clear/clearAll 全部挂起但被 fire-and-forget 掩盖；一旦被
+ * await（如 clearSegments）即阻塞主流程。
+ */
+function promisifyTx(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('IDB transaction aborted'));
+  });
+}
+
 export const indexedDB = {
   async open(): Promise<IDBDatabase> {
     return openDB();
@@ -53,7 +68,7 @@ export const indexedDB = {
     const db = await openDB();
     const tx = db.transaction(storeName, 'readwrite');
     tx.objectStore(storeName).put(item);
-    return promisify(tx as unknown as IDBRequest<void>);
+    return promisifyTx(tx);
   },
 
   async putAll(
@@ -66,7 +81,7 @@ export const indexedDB = {
     for (const item of items) {
       store.put(item);
     }
-    return promisify(tx as unknown as IDBRequest<void>);
+    return promisifyTx(tx);
   },
 
   async getAll<S extends keyof StoreSchema>(storeName: S): Promise<StoreSchema[S][]> {
@@ -86,14 +101,14 @@ export const indexedDB = {
     const db = await openDB();
     const tx = db.transaction(storeName, 'readwrite');
     tx.objectStore(storeName).delete(key);
-    return promisify(tx as unknown as IDBRequest<void>);
+    return promisifyTx(tx);
   },
 
   async clear(storeName: 'segments' | 'contexts' | 'drafts'): Promise<void> {
     const db = await openDB();
     const tx = db.transaction(storeName, 'readwrite');
     tx.objectStore(storeName).clear();
-    return promisify(tx as unknown as IDBRequest<void>);
+    return promisifyTx(tx);
   },
 
   async clearAll(): Promise<void> {
@@ -102,6 +117,6 @@ export const indexedDB = {
     tx.objectStore('segments').clear();
     tx.objectStore('contexts').clear();
     tx.objectStore('drafts').clear();
-    return promisify(tx as unknown as IDBRequest<void>);
+    return promisifyTx(tx);
   },
 };

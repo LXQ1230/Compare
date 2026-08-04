@@ -159,8 +159,13 @@ export const useCompareStore = defineStore('compare', () => {
       storage.saveMeta(receivedMeta);
       // Rev. 5-8: clear the previous session's rows first so stale segments
       // can never leak into a resumed session after reload.
-      await storage.clearSegments().catch(() => {});
-      storage.saveSegments(collectedChunks).catch(() => { /* best-effort */ });
+      // Rev. 三期: clearSegments 不阻塞对比主流程——链式保证 clear→save 顺序，
+      // 但 await 会卡死 startCompare（IndexedDB 事务 promise 已修复，仍保持
+      // 非阻塞设计，IndexedDB 失败不影响对比结果展示）。
+      void storage
+        .clearSegments()
+        .then(() => storage.saveSegments(collectedChunks))
+        .catch(() => { /* best-effort */ });
     }
 
     // Build sidebar change-context list after segments are assembled
