@@ -1,0 +1,54 @@
+- generic [ref=e26]:
+  - generic [ref=e27]:
+    - generic [ref=e28]:
+      - generic [ref=e29]: sampleA.txt ↔ sampleB.txt
+      - generic [ref=e30]: 3 处变更
+    - generic [ref=e31]:
+      - button "🔍 搜索" [ref=e32] [cursor=pointer]
+      - button "⇶ 分栏" [ref=e33] [cursor=pointer]
+      - button "✏️ 退出编辑" [active] [ref=e102] [cursor=pointer]
+      - button "📥 导出" [ref=e35] [cursor=pointer]
+  - generic [ref=e36]:
+    - complementary [ref=e37]:
+      - button "▶" [ref=e38] [cursor=pointer]
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - generic [ref=e41]:
+            - generic [ref=e42]: "2"
+            - text: 新增
+          - generic [ref=e43]:
+            - generic [ref=e44]: "0"
+            - text: 删除
+          - generic [ref=e45]:
+            - generic [ref=e46]: "1"
+            - text: 修改
+        - heading "变更分布" [level=4] [ref=e48]
+        - generic [ref=e54]:
+          - heading "变更列表" [level=4] [ref=e55]
+          - generic [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]: +
+            - generic [ref=e58]:
+              - generic [ref=e59]: 孤獨園。與大比丘眾千二百五十人俱。 佛告諸比丘:一切皆苦。凡所有相,皆是虛妄。應作如是觀。 若見諸相非相,則
+              - generic [ref=e60]: 新增·行 3
+          - generic [ref=e61] [cursor=pointer]:
+            - generic [ref=e62]: ~
+            - generic [ref=e63]:
+              - generic [ref=e64]: 應作如是觀。 若見諸相非相,則即見如來。
+              - generic [ref=e65]: 修改·行 5 → 5
+          - generic [ref=e66] [cursor=pointer]:
+            - generic [ref=e67]: ~
+            - generic [ref=e68]:
+              - generic [ref=e69]: 若見諸相非相,則即見如來。是故如來應供正遍知。
+              - generic [ref=e70]: 修改·行 5 → 5
+          - generic [ref=e71] [cursor=pointer]:
+            - generic [ref=e72]: +
+            - generic [ref=e73]:
+              - generic [ref=e74]: 即見如來。是故如來應供正遍知。
+              - generic [ref=e75]: 新增·行 5
+    - main [ref=e76]:
+      - generic [ref=e83]:
+        - heading "编辑模式 琥珀=新增 紫=删除 绿/红/黄=原始差异" [level=4] [ref=e84]:
+          - text: 编辑模式
+          - generic [ref=e85]: 琥珀=新增 紫=删除 绿/红/黄=原始差异
+        - textbox [ref=e89]:
+          - generic [ref=e90]: 如是我聞。一時佛住舍衛國祇樹給孤獨園。與大比丘眾千二百五十人俱。⏎⏎佛告諸比丘:一切皆苦。凡所有相,皆是虛妄。應作如是觀。⏎⏎若見諸相非相,即見如來。是故如來應供正遍知。⏎【新加的测试文字】

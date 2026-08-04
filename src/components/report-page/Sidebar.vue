@@ -25,6 +25,10 @@ function locationLabel(ctx: { type: string; lineA: number; lineB: number; side?:
   return `行 ${ctx.lineA} → ${ctx.lineB}`;
 }
 
+function isProcessed(ci: number): boolean {
+  return editorStore.processedCis.includes(ci);
+}
+
 function scrollTo(ci: number) {
   // Rev. E3: editing mode navigates through the CodeMirror channel
   // (__cmScrollToCi), otherwise the classic ci-N DOM anchor.
@@ -40,6 +44,14 @@ function scrollTo(ci: number) {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.classList.add('ci-flash');
     setTimeout(() => el.classList.remove('ci-flash'), 1200);
+  }
+}
+
+/** Click handler — scroll + mark as processed in editing mode (rev. edit-persistence) */
+function handleClick(ci: number): void {
+  scrollTo(ci);
+  if (editorStore.isEditing) {
+    editorStore.markProcessed(ci);
   }
 }
 </script>
@@ -63,6 +75,14 @@ function scrollTo(ci: number) {
         </div>
       </div>
 
+      <!-- Edit progress (rev. edit-persistence) -->
+      <div v-if="editorStore.isEditing" class="edit-progress">
+        <span class="progress-label">编辑进度</span>
+        <span class="progress-count">
+          {{ editorStore.processedCis.length }} / {{ compareStore.stats.total }}
+        </span>
+      </div>
+
       <!-- Minimap -->
       <div class="minimap-section">
         <h4 class="section-title">变更分布</h4>
@@ -80,10 +100,13 @@ function scrollTo(ci: number) {
         <div v-if="compareStore.contexts.length === 0" class="empty-hint">暂无变更</div>
         <div
           v-for="ctx in compareStore.contexts" :key="`${ctx.index}-${ctx.side ?? 'none'}`"
-          class="change-item" :class="`change-${ctx.type}`"
-          @click="scrollTo(ctx.index)"
+          class="change-item"
+          :class="[`change-${ctx.type}`, { 'change-processed': editorStore.isEditing && isProcessed(ctx.index) }]"
+          @click="handleClick(ctx.index)"
         >
-          <span class="change-badge" :class="typeBadge(ctx.type).cls">{{ typeBadge(ctx.type).label }}</span>
+          <span class="change-badge" :class="typeBadge(ctx.type).cls">
+            {{ editorStore.isEditing && isProcessed(ctx.index) ? '\u2713' : typeBadge(ctx.type).label }}
+          </span>
           <div class="change-row">
             <!-- upper: ... [changed] ... -->
             <div class="change-context">
@@ -137,6 +160,16 @@ function scrollTo(ci: number) {
 .dot-del { background: var(--color-del-text); }
 .dot-mod { background: var(--color-mod-old-text); }
 
+/* ── edit progress (rev. edit-persistence) ─────────────── */
+.edit-progress {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 8px; margin-bottom: 12px;
+  border-radius: 6px; background: var(--color-bg);
+  font-size: 12px;
+}
+.progress-label { font-weight: 600; color: var(--color-text-secondary); }
+.progress-count { font-weight: 700; color: var(--color-focus-border); }
+
 /* ── change list ────────────────────────────────────────── */
 .change-list { max-height: calc(100vh - 280px); overflow-y: auto; }
 .change-item {
@@ -145,6 +178,13 @@ function scrollTo(ci: number) {
   transition: background 0.15s;
 }
 .change-item:hover { background: var(--color-bg-hover); }
+
+/* Processed change item — dimmed + green check badge (rev. edit-persistence) */
+.change-processed { opacity: 0.45; }
+.change-processed .change-badge {
+  background: var(--color-mod-old-text) !important;
+  color: #fff;
+}
 
 /*  + / - / ~  circle */
 .change-badge {

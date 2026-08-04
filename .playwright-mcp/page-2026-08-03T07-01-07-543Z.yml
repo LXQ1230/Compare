@@ -1,0 +1,23 @@
+- generic [ref=e3]:
+  - heading "文档对比工具" [level=1] [ref=e4]
+  - paragraph [ref=e5]: 上传两个文件，进行字符级精确对比
+  - generic [ref=e6] [cursor=pointer]:
+    - button "Choose File" [active] [ref=e7]
+    - paragraph [ref=e8]: 拖拽文件到此处，或点击选择
+    - paragraph [ref=e9]: 支持 .txt / .docx / .md 格式
+  - generic [ref=e12]:
+    - generic [ref=e13]:
+      - generic [ref=e14]: 文件 A（原始）
+      - generic [ref=e15]: 275导出.txt
+      - generic [ref=e16]:
+        - button "更换文件" [ref=e17] [cursor=pointer]
+        - button "×" [ref=e18] [cursor=pointer]
+    - button "⇄" [ref=e19] [cursor=pointer]
+    - generic [ref=e20]:
+      - generic [ref=e21]: 文件 B（修改）
+      - generic [ref=e22]: 275导出修改.txt
+      - generic [ref=e23]:
+        - button "更换文件" [ref=e24] [cursor=pointer]
+        - button "×" [ref=e25] [cursor=pointer]
+  - button "开始对比" [ref=e10] [cursor=pointer]
+  - paragraph [ref=e11]: 支持格式：txt · docx · md

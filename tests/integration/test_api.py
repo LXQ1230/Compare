@@ -44,6 +44,8 @@ class TestCompareEndpoint:
         meta = next(p for p in parsed if p["type"] == "meta")
         assert all(k in meta["stats"] for k in ("total", "add", "del", "mod"))
         assert meta["stats"]["total"] > 0
+        # 方案 L0: meta 携带 scale 分级（小文件应为 S）
+        assert meta["scale"] == "S"
 
         # segments chunk is populated
         seg_line = next(p for p in parsed if p["type"] == "segments")
@@ -105,6 +107,29 @@ class TestCompareEndpoint:
         assert meta["stats"]["total"] > 0
 
     # ── error cases ────────────────────────────────────────────────
+
+    def test_oversized_file_rejected(self, client, tmp_path, monkeypatch):
+        """Files exceeding COMPARE_MAX_BYTES return 413 (方案 L0/XL 上限)."""
+        import src_backend.main as main_mod
+        monkeypatch.setattr(main_mod, "COMPARE_MAX_BYTES", 1024)  # 1KB 上限
+
+        a_file = tmp_path / "a.txt"
+        b_file = tmp_path / "b.txt"
+        a_file.write_text("x" * 2048, encoding="utf-8")  # 2KB > 1KB
+        b_file.write_text("y" * 10, encoding="utf-8")
+
+        response = client.post(
+            "/api/compare",
+            files={
+                "fileA": ("a.txt", a_file.read_bytes(), "text/plain"),
+                "fileB": ("b.txt", b_file.read_bytes(), "text/plain"),
+            },
+        )
+
+        assert response.status_code == 413
+        body = response.json()
+        assert body["error"] is True
+        assert body["severity"] == "blocking"
 
     def test_unsupported_format_rejected(self, client, tmp_path):
         """Uploading an unsupported extension (.pdf) returns 400 AppError."""

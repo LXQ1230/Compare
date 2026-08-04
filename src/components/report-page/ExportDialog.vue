@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useCompareStore } from '../../stores/compare';
 import { useEditorStore } from '../../stores/editor';
+import { classifyEdit, buildDocText, normalizeLineEndings } from '../../render/editClassifier';
+import { mergeLayers } from '../../export/mergeLayers';
 import { exportToTXT, exportToHTML, exportToMD, downloadFile } from '../../export/exporters';
 
 const compareStore = useCompareStore();
@@ -32,14 +34,32 @@ function doExport(formatId: string) {
   // Rev. D1 / 6-6: TXT/HTML/MD all read the EDITED segments while editing,
   // the original compareStore segments otherwise.
   flushEdits();
-  const segments = editorStore.isEditing
-    ? editorStore.getEditedSegments()
-    : compareStore.segments;
 
   let content: string;
-  if (formatId === 'html') content = exportToHTML(segments);
-  else if (formatId === 'md') content = exportToMD(segments);
-  else content = exportToTXT(segments);
+  if (editorStore.isEditing) {
+    // 编辑模式导出：同时应用「查看模式的对比差异」与「用户编辑」两层修改。
+    // 编辑器基线 = 应用原始对比差异后的文本，其当前内容 = 应用两层修改后的最终文档。
+    const baseline = normalizeLineEndings(buildDocText(compareStore.segments));
+    const edited = normalizeLineEndings(editorStore.editText);
+    if (formatId === 'txt') {
+      // 纯文本：输出干净最终文档（无标记概念）。
+      content = edited;
+    } else {
+      // HTML/MD：合成「完整文档的带标记 segments」——
+      // 未编辑区域保留原始 add/del/mod 标记，编辑区域只显示用户编辑标记（用户覆盖原始）。
+      const userResult = classifyEdit(baseline, edited);
+      const merged = mergeLayers(
+        compareStore.segments,
+        userResult.dirty ? userResult.segments : [],
+      );
+      content = formatId === 'html' ? exportToHTML(merged) : exportToMD(merged);
+    }
+  } else {
+    const segments = compareStore.segments;
+    if (formatId === 'html') content = exportToHTML(segments);
+    else if (formatId === 'md') content = exportToMD(segments);
+    else content = exportToTXT(segments);
+  }
   downloadFile(content, `compare-report.${formatId}`, fmt.mime);
 }
 </script>

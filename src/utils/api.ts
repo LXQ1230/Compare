@@ -9,7 +9,7 @@
  * timer — so it cannot be stalled by a busy event loop or a hung proxy.
  */
 
-import type { ErrorEnvelope, StreamMessage } from '@/types';
+import type { ErrorEnvelope, StreamMessage, CompareStats } from '@/types';
 
 const BASE = '/api';
 
@@ -183,6 +183,14 @@ export const api = {
     text?: string;
     html?: string;
     time?: number;
+    cursor_pos?: number;
+    scroll_pos?: number;
+    last_edit_offset?: number;
+    processed_cis?: number[];
+    file_a_name?: string;
+    file_b_name?: string;
+    stats?: CompareStats;
+    total_chunks?: number;
   }): Promise<Record<string, unknown>> {
     const res = await fetchWithTimeout(`${BASE}/autosave`, {
       method: 'POST',

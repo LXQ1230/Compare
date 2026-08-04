@@ -58,9 +58,13 @@ export const useCompareStore = defineStore('compare', () => {
       return;
     }
 
-    const collectedSegments: { index: number; data: Segment[] }[] = [];
+    const collectedChunks: { id: string; index: number; data: Segment[] }[] = [];
     let receivedMeta: CompareMeta | null = null;
     let streamError: ErrorEnvelope | null = null;
+    // 方案 P5（边收边渲染）：首个 segments chunk 到达即构建一次上下文，
+    // 使部分结果立即可用（流式中途出错时 ReportPage 也能渲染已收部分）；
+    // done 后末尾的全量 buildContexts 会覆盖为完整列表。
+    let previewBuilt = false;
 
     // This single await covers the ENTIRE lifecycle — upload, streaming,
     // and any error/timeout.  It always returns; it never hangs.
@@ -81,10 +85,21 @@ export const useCompareStore = defineStore('compare', () => {
               stats: msg.stats,
               timestamp: Date.now(),
               totalChunks: msg.totalChunks,
+              scale: msg.scale,
             };
+            // 方案 P5：meta 到达即生效（stats/scale 立即可用，不等全流程结束）
+            meta.value = receivedMeta;
             break;
           case 'segments':
-            collectedSegments.push({ index: msg.index, data: msg.data as Segment[] });
+            // 边收边 push（方案 P1）：不再累积 collectedSegments 后 flatMap，
+            // 消除百万段内存峰值 ×2，首个 chunk 数据立即可用
+            segments.value.push(...(msg.data as Segment[]));
+            collectedChunks.push({ id: `seg-${msg.index}`, index: msg.index, data: msg.data as Segment[] });
+            // 方案 P5：首个 chunk 到达即构建部分上下文（低风险提前渲染）
+            if (!previewBuilt && meta.value) {
+              previewBuilt = true;
+              buildContexts();
+            }
             break;
           /* 'done' is just consumed; no special handling needed */
         }
@@ -111,12 +126,8 @@ export const useCompareStore = defineStore('compare', () => {
     // If we have an error AND no data, report it and stay on the select page.
     if (streamError) {
       error.value = streamError;
-      if (collectedSegments.length === 0) return;
+      if (segments.value.length === 0) return;
     }
-
-    // Assemble results.
-    collectedSegments.sort((a, b) => a.index - b.index);
-    segments.value = collectedSegments.flatMap((c) => c.data);
 
     if (receivedMeta) {
       meta.value = receivedMeta;
@@ -127,15 +138,33 @@ export const useCompareStore = defineStore('compare', () => {
     // Persist to local storage (fire-and-forget — best-effort).
     if (segments.value.length > 0 && receivedMeta) {
       storage.saveMeta(receivedMeta);
-      const chunks = collectedSegments.map((c) => ({
-        id: `seg-${c.index}`,
-        index: c.index,
-        data: c.data,
-      }));
-      storage.saveSegments(chunks).catch(() => { /* best-effort */ });
+      storage.saveSegments(collectedChunks).catch(() => { /* best-effort */ });
     }
 
     // Build sidebar change-context list after segments are assembled
+    buildContexts();
+  }
+
+  /**
+   * Restore a compare session from an edit-session draft (rev. edit-persistence/2).
+   * Fills segments + meta directly so the Report page renders without a
+   * re-run of the comparison.
+   */
+  function restoreFromDraft(
+    segmentsData: Segment[],
+    draft: { fileAName: string; fileBName: string; timestamp: number; stats?: CompareStats; totalChunks?: number },
+  ): void {
+    segments.value = segmentsData;
+    meta.value = {
+      fileA: draft.fileAName,
+      fileB: draft.fileBName,
+      stats: draft.stats ?? { total: 0, add: 0, del: 0, mod: 0 },
+      timestamp: draft.timestamp,
+      totalChunks: draft.totalChunks ?? 0,
+    };
+    isComparing.value = false;
+    isComplete.value = true;
+    error.value = null;
     buildContexts();
   }
 
@@ -196,6 +225,6 @@ export const useCompareStore = defineStore('compare', () => {
     segments, contexts, meta, error,
     isComparing, isComplete, currentPhase, progress,
     stats, fileAName, fileBName,
-    reset, startCompare, buildContexts,
+    reset, startCompare, buildContexts, restoreFromDraft,
   };
 });

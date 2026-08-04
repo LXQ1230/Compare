@@ -18,6 +18,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    // Rev. edit-persistence: sandbox safe-delete intercepts rmSync on dist
+    // and fails (trash path conversion). Skip the empty-out step instead.
+    emptyOutDir: false,
   },
   test: {
     environment: 'jsdom',

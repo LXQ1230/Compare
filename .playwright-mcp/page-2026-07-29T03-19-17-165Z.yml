@@ -1,0 +1,87 @@
+- generic [ref=e26]:
+  - generic [ref=e27]:
+    - generic [ref=e28]:
+      - generic [ref=e29]: sample_a.txt ↔ sample_b.txt
+      - generic [ref=e30]: 6 处变更
+    - generic [ref=e31]:
+      - button "🔍 搜索" [ref=e32] [cursor=pointer]
+      - button "⇶ 分栏" [ref=e33] [cursor=pointer]
+      - button "✏️ 编辑" [ref=e34] [cursor=pointer]
+      - button "📥 导出" [ref=e35] [cursor=pointer]
+  - generic [ref=e36]:
+    - main [ref=e37]:
+      - generic [ref=e38]:
+        - text: The quick brown fox jumps over the lazy dog. This is a test file with multiple lines. It contains several paragraphs of
+        - mark [ref=e39]: written
+        - text: text. This line has some
+        - mark [ref=e40]: differences
+        - mark [ref=e41]: DIFFERENCES
+        - text: between
+        - mark [ref=e42]: the
+        - text: versions. Here is another line that
+        - mark [ref=e43]: will be modifi
+        - mark [ref=e44]: has been chang
+        - text: ed. And a line that stays the same in both files.
+        - mark [ref=e45]: A brand new line added in version B.
+        - text: The end of the file provides closure
+        - mark [ref=e46]: for all readers
+        - text: . Goodbye, world!
+    - complementary [ref=e47]:
+      - button "▶" [ref=e48] [cursor=pointer]
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - generic [ref=e51]:
+            - generic [ref=e52]: "6"
+            - text: 总变更
+          - generic [ref=e53]:
+            - generic [ref=e54]: "4"
+            - text: 新增
+          - generic [ref=e55]:
+            - generic [ref=e56]: "0"
+            - text: 删除
+          - generic [ref=e57]:
+            - generic [ref=e58]: "2"
+            - text: 修改
+        - heading "变更分布" [level=4] [ref=e60]
+        - generic [ref=e70]:
+          - heading "变更列表 (8/8)" [level=4] [ref=e71]
+          - generic [ref=e72] [cursor=pointer]:
+            - generic [ref=e73]: 新增
+            - generic [ref=e74]:
+              - generic [ref=e75]: ines. It contains several paragraphs of written text. This line has some differences
+              - text: 修改第 3 行
+          - generic [ref=e76] [cursor=pointer]:
+            - generic [ref=e77]: 修改
+            - generic [ref=e78]:
+              - generic [ref=e79]: written text. This line has some differencesDIFFERENCES between
+              - text: 原始第 5 行
+          - generic [ref=e80] [cursor=pointer]:
+            - generic [ref=e81]: 修改
+            - generic [ref=e82]:
+              - generic [ref=e83]: text. This line has some differencesDIFFERENCES between the
+              - text: 原始第 5 行
+          - generic [ref=e84] [cursor=pointer]:
+            - generic [ref=e85]: 新增
+            - generic [ref=e86]:
+              - generic [ref=e87]: DIFFERENCES between the versions. Here is another line that will
+              - text: 修改第 5 行
+          - generic [ref=e88] [cursor=pointer]:
+            - generic [ref=e89]: 修改
+            - generic [ref=e90]:
+              - generic [ref=e91]: the versions. Here is another line that will be modifihas been changed. And a line that stays
+              - text: 原始第 6 行
+          - generic [ref=e92] [cursor=pointer]:
+            - generic [ref=e93]: 修改
+            - generic [ref=e94]:
+              - generic [ref=e95]: Here is another line that will be modifihas been changed. And a line that stays the same in bo
+              - text: 原始第 6 行
+          - generic [ref=e96] [cursor=pointer]:
+            - generic [ref=e97]: 新增
+            - generic [ref=e98]:
+              - generic [ref=e99]: line that stays the same in both files. A brand new line added in version B. The end of the file provides closure f
+              - text: 修改第 7 行
+          - generic [ref=e100] [cursor=pointer]:
+            - generic [ref=e101]: 新增
+            - generic [ref=e102]:
+              - generic [ref=e103]: B. The end of the file provides closure for all readers. Goodbye, world!
+              - text: 修改第 10 行

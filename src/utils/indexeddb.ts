@@ -5,11 +5,13 @@
  */
 
 const DB_NAME = 'compare-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 interface StoreSchema {
   segments: { id: string; index: number; data: unknown[] };
   contexts: { id: string; index: number; data: unknown[] };
+  /** 编辑草稿（方案 L5/P4）：百万字 editText 无法容纳于 localStorage 5MB 配额 */
+  drafts: { key: string; value: unknown };
 }
 
 function openDB(): Promise<IDBDatabase> {
@@ -22,6 +24,9 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('contexts')) {
         db.createObjectStore('contexts', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('drafts')) {
+        db.createObjectStore('drafts', { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -41,8 +46,18 @@ export const indexedDB = {
     return openDB();
   },
 
+  async put(
+    storeName: 'segments' | 'contexts' | 'drafts',
+    item: { id?: string; key?: string; index?: number; data?: unknown[]; value?: unknown },
+  ): Promise<void> {
+    const db = await openDB();
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).put(item);
+    return promisify(tx as unknown as IDBRequest<void>);
+  },
+
   async putAll(
-    storeName: 'segments' | 'contexts',
+    storeName: 'segments' | 'contexts' | 'drafts',
     items: { id: string; index: number; data: unknown[] }[],
   ): Promise<void> {
     const db = await openDB();
@@ -54,14 +69,27 @@ export const indexedDB = {
     return promisify(tx as unknown as IDBRequest<void>);
   },
 
-  async getAll(storeName: 'segments' | 'contexts'): Promise<StoreSchema[typeof storeName][]> {
+  async getAll<S extends keyof StoreSchema>(storeName: S): Promise<StoreSchema[S][]> {
     const db = await openDB();
     const tx = db.transaction(storeName, 'readonly');
     const store = tx.objectStore(storeName);
-    return promisify(store.getAll());
+    return promisify(store.getAll() as IDBRequest<StoreSchema[S][]>);
   },
 
-  async clear(storeName: 'segments' | 'contexts'): Promise<void> {
+  async get<S extends keyof StoreSchema>(storeName: S, key: string): Promise<StoreSchema[S] | undefined> {
+    const db = await openDB();
+    const tx = db.transaction(storeName, 'readonly');
+    return promisify(tx.objectStore(storeName).get(key) as IDBRequest<StoreSchema[S] | undefined>);
+  },
+
+  async delete(storeName: 'segments' | 'contexts' | 'drafts', key: string): Promise<void> {
+    const db = await openDB();
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).delete(key);
+    return promisify(tx as unknown as IDBRequest<void>);
+  },
+
+  async clear(storeName: 'segments' | 'contexts' | 'drafts'): Promise<void> {
     const db = await openDB();
     const tx = db.transaction(storeName, 'readwrite');
     tx.objectStore(storeName).clear();
@@ -70,9 +98,10 @@ export const indexedDB = {
 
   async clearAll(): Promise<void> {
     const db = await openDB();
-    const tx = db.transaction(['segments', 'contexts'], 'readwrite');
+    const tx = db.transaction(['segments', 'contexts', 'drafts'], 'readwrite');
     tx.objectStore('segments').clear();
     tx.objectStore('contexts').clear();
+    tx.objectStore('drafts').clear();
     return promisify(tx as unknown as IDBRequest<void>);
   },
 };

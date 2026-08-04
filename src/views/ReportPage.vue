@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useCompareStore } from '../stores/compare';
 import { useViewStore } from '../stores/view';
 import { useEditorStore } from '../stores/editor';
@@ -26,14 +26,23 @@ const versionStore = useVersionStore();
 const isExportDialogVisible = ref(false);
 const showVersions = ref(false);
 
+/**
+ * 方案 P2：大文档（scale M/L）查看态由只读 CodeMirror 承接（虚拟行渲染），
+ * v-html 视图仅用于小文档（scale S）。
+ */
+const isLargeDoc = computed(() => {
+  const s = compareStore.meta?.scale;
+  return s === 'M' || s === 'L';
+});
+
 useKeyboardShortcuts({
   onSearchToggle: () => searchStore.toggle(),
   onToggleView: () => viewStore.toggleView(),
-  onEdit: () => {
+  onEdit: async () => {
     if (editorStore.isEditing) {
       editorStore.exitEdit();
     } else {
-      editorStore.enterEdit();
+      await editorStore.enterEdit();
     }
   },
   onExport: () => { isExportDialogVisible.value = true; },
@@ -63,12 +72,12 @@ useKeyboardShortcuts({
 const activeContextIdx = ref(-1);
 
 function scrollToContext(ctx: { index: number }): void {
-  // Rev. E3: editing mode navigates through the CodeMirror channel
-  // (__cmScrollToCi), otherwise the classic ci-N DOM anchor.
+  // Rev. E3 + 方案 P2: 编辑模式或大文档查看态都走 CodeMirror 通道
+  // (__cmScrollToCi)，否则经典 ci-N DOM 锚点。
   const host = document.querySelector('.report-main') as
     | (HTMLElement & { __cmScrollToCi?: (ci: number) => void })
     | null;
-  if (editorStore.isEditing && host?.__cmScrollToCi) {
+  if ((editorStore.isEditing || isLargeDoc.value) && host?.__cmScrollToCi) {
     host.__cmScrollToCi(ctx.index);
     return;
   }
@@ -93,8 +102,9 @@ versionStore.loadVersions();
       <Sidebar />
       <main class="report-main">
         <CodeMirrorDiff />
-        <UnifiedView v-if="viewStore.viewMode === 'unified' && !editorStore.isEditing" />
-        <SplitView v-else-if="!editorStore.isEditing" />
+        <!-- 方案 P2: 大文档查看态由 CodeMirrorDiff 内的只读 CM 承接 -->
+        <UnifiedView v-if="viewStore.viewMode === 'unified' && !editorStore.isEditing && !isLargeDoc" />
+        <SplitView v-else-if="!editorStore.isEditing && !isLargeDoc" />
       </main>
     </div>
     <ExportDialog v-if="isExportDialogVisible" @close="isExportDialogVisible = false" />

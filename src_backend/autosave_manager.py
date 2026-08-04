@@ -21,10 +21,28 @@ class AutosaveManager:
     def save(
         self, key: str, text: str = "",
         html: str = "", timestamp: float = 0.0,
+        cursor_pos: int = 0, scroll_pos: int = 0,
+        last_edit_offset: int = -1,
+        processed_cis: list | None = None,
+        file_a_name: str = "", file_b_name: str = "",
+        stats: dict | None = None,
+        total_chunks: int = 0,
     ) -> None:
-        """Persist an autosave entry keyed by a unique identifier."""
-        # When timestamp is exactly 0.0, treat it as user-supplied (default)
-        entry = {"key": key, "text": text, "html": html, "time": timestamp}
+        """Persist an autosave entry keyed by a unique identifier.
+
+        方案 L5/P5：去掉 segments 与 baseline（均为可重建冗余——
+        baseline 由 buildDocText(segments) 重建，segments 存于 IndexedDB），
+        payload 缩至 ~1/10，百万字 autosave 不再序列化全量段。
+        """
+        entry = {
+            "key": key, "text": text, "html": html, "time": timestamp,
+            "cursor_pos": cursor_pos, "scroll_pos": scroll_pos,
+            "last_edit_offset": last_edit_offset,
+            "processed_cis": processed_cis or [],
+            "file_a_name": file_a_name, "file_b_name": file_b_name,
+            "stats": stats or {},
+            "total_chunks": total_chunks,
+        }
         path = self._dir / f"{_safe_key(key)}.json"
         path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -37,7 +55,20 @@ class AutosaveManager:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
-        return {"text": data.get("text", ""), "html": data.get("html", ""), "time": data.get("time", 0.0)}
+        return {
+            "key": data.get("key", key),
+            "text": data.get("text", ""),
+            "html": data.get("html", ""),
+            "time": data.get("time", 0.0),
+            "cursor_pos": data.get("cursor_pos", 0),
+            "scroll_pos": data.get("scroll_pos", 0),
+            "last_edit_offset": data.get("last_edit_offset", -1),
+            "processed_cis": data.get("processed_cis", []),
+            "file_a_name": data.get("file_a_name", ""),
+            "file_b_name": data.get("file_b_name", ""),
+            "stats": data.get("stats", {}),
+            "total_chunks": data.get("total_chunks", 0),
+        }
 
     def delete(self, key: str) -> None:
         """Remove an autosave entry."""

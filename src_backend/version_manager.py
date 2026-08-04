@@ -1,10 +1,20 @@
-"""Version history manager for compare sessions."""
+"""Version history manager for compare sessions.
+
+方案 P5（L5 §4.5.2）：版本快照 patch 化——第一个版本存全量，
+后续版本存"相对最新版本的 patch"（复用 diff_engine.make_patches），
+恢复时沿链逐条 apply。100 万字单版本 4MB 全量 → kb 级 patch。
+链式结构：Vn.a_parent = V(n-1) 的 id；_cleanup 删除最旧版本时，
+将其直接后继提升为全量存储（链不断裂，恢复始终可用）。
+旧格式（file_a_content/file_b_content 全量字段）兼容读取。
+"""
 
 import json
 import re
 import time
 import uuid
 from pathlib import Path
+
+from src_backend.diff_engine import apply_patches, make_patches
 
 _VERSION_ID_RE = re.compile(r'^[0-9a-f]{12}$')
 
@@ -15,27 +25,96 @@ def _validate_version_id(version_id: str) -> bool:
 
 
 class VersionManager:
-    """Persist and restore named versions of diff results (max 10)."""
+    """Persist and restore named versions of diff results (max 10, patch-chained)."""
 
     def __init__(self, storage_dir: str = "./versions"):
         self._dir = Path(storage_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
 
+    # ── save ──────────────────────────────────────────────────────
+
     def save(
         self, label: str, file_a_content: str,
         file_b_content: str, stats: dict,
     ) -> str:
-        """Persist a version and return its id. Auto-cleans oldest if >10."""
+        """Persist a version and return its id. Auto-cleans oldest if >10.
+
+        后续版本相对"最新版本"存 patch（a_parent/b_parent 指向最新 id），
+        首个版本存全量（parent 为 None）。
+        """
         version_id = uuid.uuid4().hex[:12]
+        prev_id, prev_a, prev_b = self._latest_full()
+        if prev_id:
+            a_text = make_patches(prev_a, file_a_content)
+            a_parent = prev_id
+            b_text = make_patches(prev_b, file_b_content)
+            b_parent = prev_id
+        else:
+            a_text = file_a_content
+            a_parent = None
+            b_text = file_b_content
+            b_parent = None
         entry = {
             "id": version_id, "label": label, "time": time.time(),
-            "file_a_content": file_a_content,
-            "file_b_content": file_b_content, "stats": stats,
+            "a_parent": a_parent, "a_text": a_text,
+            "b_parent": b_parent, "b_text": b_text,
+            "stats": stats,
         }
         path = self._dir / f"{version_id}.json"
         path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
         self._cleanup()
         return version_id
+
+    def _latest_full(self) -> tuple[str | None, str, str]:
+        """最新版本（mtime 最大）的 (id, file_a 全量, file_b 全量)；无版本 (None, '', '')。"""
+        files = sorted(
+            self._dir.glob("*.json"),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        for f in files:
+            try:
+                entry = json.loads(f.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            try:
+                return entry["id"], self._resolve_content(entry, "a"), self._resolve_content(entry, "b")
+            except Exception:
+                continue
+        return None, "", ""
+
+    # ── chain resolve ─────────────────────────────────────────────
+
+    def _load(self, version_id: str) -> dict | None:
+        if not _validate_version_id(version_id):
+            return None
+        path = self._dir / f"{version_id}.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def _resolve_content(self, entry: dict, side: str) -> str:
+        """沿 parent 链逐条 apply_patches，得到该 entry 的 side 全量文本。
+
+        兼容旧格式（直接存 file_a_content/file_b_content 全量）。
+        """
+        legacy = entry.get("file_a_content" if side == "a" else "file_b_content")
+        if legacy is not None:
+            return legacy
+        text = entry.get(f"{side}_text", "")
+        parent = entry.get(f"{side}_parent")
+        if parent:
+            parent_entry = self._load(parent)
+            if parent_entry is None:
+                raise ValueError(f"parent version {parent} missing")
+            base = self._resolve_content(parent_entry, side)
+            result, statuses = apply_patches(base, text)
+            return result
+        return text
+
+    # ── list / restore ────────────────────────────────────────────
 
     def list(self) -> list[dict]:
         """Return versions ordered by newest first."""
@@ -56,28 +135,56 @@ class VersionManager:
 
     def restore(self, version_id: str) -> dict | None:
         """Load full version data by id. Returns None if not found or invalid."""
-        if not _validate_version_id(version_id):
-            return None
-        path = self._dir / f"{version_id}.json"
-        if not path.exists():
+        entry = self._load(version_id)
+        if entry is None:
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            file_a = self._resolve_content(entry, "a")
+            file_b = self._resolve_content(entry, "b")
+        except Exception:
             return None
         return {
-            "id": data["id"], "label": data["label"],
-            "time": data["time"], "file_a_content": data["file_a_content"],
-            "file_b_content": data["file_b_content"],
-            "stats": data.get("stats", {}),
+            "id": entry["id"], "label": entry["label"],
+            "time": entry["time"], "file_a_content": file_a,
+            "file_b_content": file_b,
+            "stats": entry.get("stats", {}),
         }
 
+    # ── cleanup ───────────────────────────────────────────────────
+
     def _cleanup(self) -> None:
-        """Keep at most 10 versions; delete oldest by mtime."""
+        """Keep at most 10 versions; delete oldest by mtime.
+
+        删除最旧版本前，将其直接后继（a_parent/b_parent 指向被删者）提升
+        为全量存储——链式结构在中间节点删除后保持完整，恢复始终可用。
+        """
         files = sorted(self._dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
         while len(files) > 10:
+            victim = files[0]
+            victim_id = self._load(victim.stem).get("id") if self._load(victim.stem) else None
+            # 提升依赖被删版本的后继（链式线性，至多一个）
+            for f in files[1:]:
+                try:
+                    entry = json.loads(f.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if entry.get("a_parent") == victim_id or entry.get("b_parent") == victim_id:
+                    try:
+                        full_a = self._resolve_content(entry, "a")
+                        full_b = self._resolve_content(entry, "b")
+                    except Exception:
+                        continue
+                    entry["a_parent"] = None
+                    entry["a_text"] = full_a
+                    entry["b_parent"] = None
+                    entry["b_text"] = full_b
+                    f.write_text(
+                        json.dumps(entry, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    break
             try:
-                files[0].unlink()
-                files.pop(0)
+                victim.unlink()
             except OSError:
                 break
+            files.pop(0)

@@ -1,0 +1,9 @@
+- generic [ref=f3e3]:
+  - heading "文档对比工具" [level=1] [ref=f3e4]
+  - paragraph [ref=f3e5]: 上传两个文件，进行字符级精确对比
+  - generic [ref=f3e6] [cursor=pointer]:
+    - button "Choose File" [ref=f3e7]
+    - paragraph [ref=f3e8]: 拖拽文件到此处，或点击选择
+    - paragraph [ref=f3e9]: 支持 .txt / .docx / .md 格式
+  - button "开始对比" [disabled] [ref=f3e10]
+  - paragraph [ref=f3e11]: 支持格式：txt · docx · md

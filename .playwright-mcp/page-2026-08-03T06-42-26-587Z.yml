@@ -1,0 +1,99 @@
+- generic [ref=f4e26]:
+  - generic [ref=f4e27]:
+    - generic [ref=f4e28]:
+      - generic [ref=f4e29]: 275导出.txt ↔ 275导出修改.txt
+      - generic [ref=f4e30]: 12 处变更
+    - generic [ref=f4e31]:
+      - button "🔍 搜索" [ref=f4e32] [cursor=pointer]
+      - button "⇶ 分栏" [ref=f4e33] [cursor=pointer]
+      - button "✏️ 退出编辑" [ref=f4e138] [cursor=pointer]
+      - button "📥 导出" [ref=f4e35] [cursor=pointer]
+  - generic [ref=f4e36]:
+    - complementary [ref=f4e37]:
+      - button "▶" [ref=f4e38] [cursor=pointer]
+      - generic [ref=f4e39]:
+        - generic [ref=f4e40]:
+          - generic [ref=f4e41]:
+            - generic [ref=f4e42]: "5"
+            - text: 新增
+          - generic [ref=f4e43]:
+            - generic [ref=f4e44]: "7"
+            - text: 删除
+          - generic [ref=f4e45]:
+            - generic [ref=f4e46]: "0"
+            - text: 修改
+        - heading "变更分布" [level=4] [ref=f4e48]
+        - generic [ref=f4e62]:
+          - heading "变更列表" [level=4] [ref=f4e63]
+          - generic [ref=f4e64] [cursor=pointer]:
+            - generic [ref=f4e65]: "-"
+            - generic [ref=f4e66]:
+              - generic [ref=f4e67]: 如是我聞。一時。佛。
+              - generic [ref=f4e68]: 删除·行 1
+          - generic [ref=f4e69] [cursor=pointer]:
+            - generic [ref=f4e70]: +
+            - generic [ref=f4e71]:
+              - generic [ref=f4e72]: 。一時。佛。在舎衞國祇國
+              - generic [ref=f4e73]: 新增·行 1
+          - generic [ref=f4e74] [cursor=pointer]:
+            - generic [ref=f4e75]: +
+            - generic [ref=f4e76]:
+              - generic [ref=f4e77]: 。在舎衞國祇國樹給孤獨園。
+              - generic [ref=f4e78]: 新增·行 1
+          - generic [ref=f4e79] [cursor=pointer]:
+            - generic [ref=f4e80]: "-"
+            - generic [ref=f4e81]:
+              - generic [ref=f4e82]: 國樹給孤獨園。與大比丘衆千二百五十人
+              - generic [ref=f4e83]: 删除·行 1
+          - generic [ref=f4e84] [cursor=pointer]:
+            - generic [ref=f4e85]: "-"
+            - generic [ref=f4e86]:
+              - generic [ref=f4e87]: 。與大比丘衆千二百五十人俱。尒時。世尊食時。著衣持缽。入舎衛大城乞食。於其城中。次第乞巳。還至夲處。飯食
+              - generic [ref=f4e88]: 删除·行 1
+          - generic [ref=f4e89] [cursor=pointer]:
+            - generic [ref=f4e90]: "-"
+            - generic [ref=f4e91]:
+              - generic [ref=f4e92]: 當為汝說。善男子善女人彂阿䅶多羅三藐三菩提心。應如是住。如是降伏其心。唯然世尊。願樂欲聞。
+              - generic [ref=f4e93]: 删除·行 1
+          - generic [ref=f4e94] [cursor=pointer]:
+            - generic [ref=f4e95]: "-"
+            - generic [ref=f4e96]:
+              - generic [ref=f4e97]: 願樂欲聞。 佛告湏菩提。諸菩薩摩訶薩應如是降伏其心。所有一切衆生之類。若卵生若胎生。若濕
+              - generic [ref=f4e98]: 删除·行 1
+          - generic [ref=f4e99] [cursor=pointer]:
+            - generic [ref=f4e100]: +
+            - generic [ref=f4e101]:
+              - generic [ref=f4e102]: 不爲。則善愈積而惡愈消。福愈盛而禍愈遠。煩惱不染於其心。障業不繞於其體。於如來正。覺。夫何何
+              - generic [ref=f4e103]: 新增·行 40
+          - generic [ref=f4e104] [cursor=pointer]:
+            - generic [ref=f4e105]: +
+            - generic [ref=f4e106]:
+              - generic [ref=f4e107]: 。覺。夫何何遠。
+              - generic [ref=f4e108]: 新增·行 40
+          - generic [ref=f4e109] [cursor=pointer]:
+            - generic [ref=f4e110]: +
+            - generic [ref=f4e111]:
+              - generic [ref=f4e112]: 何遠。之有。
+              - generic [ref=f4e113]: 新增·行 40
+          - generic [ref=f4e114] [cursor=pointer]:
+            - generic [ref=f4e115]: "-"
+            - generic [ref=f4e116]:
+              - generic [ref=f4e117]: 。之有。 永樂九年五月初一
+              - generic [ref=f4e118]: 删除·行 40
+          - generic [ref=f4e119] [cursor=pointer]:
+            - generic [ref=f4e120]: "-"
+            - generic [ref=f4e121]:
+              - generic [ref=f4e122]: 。 永樂九年五月初一日
+              - generic [ref=f4e123]: 删除·行 41
+    - main [ref=f4e124]:
+      - generic [ref=f4e139]:
+        - heading "编辑模式 琥珀=新增 紫=删除 绿/红/黄=原始差异" [level=4] [ref=f4e140]:
+          - text: 编辑模式
+          - generic [ref=f4e141]: 琥珀=新增 紫=删除 绿/红/黄=原始差异
+        - textbox [active] [ref=f4e145]:
+          - generic [ref=f4e146]: 如是我AAAA测试新增聞。一時。佛。在舎衞國祇國樹給孤獨園與。大比丘衆千二百五十俱。人尒時。世尊食時。著衣持缽。入舎衛大城乞食。於其城中。次第乞巳。還至夲處。飯食訖。収衣缽。洗足巳。敷座而坐。時。長老湏菩提在大衆中即従座起。偏袒右肩。右膝著地。合掌恭敬而白佛言。希有世尊。如来善護念諸菩薩。善付嘱諸菩薩。世尊。善男子善女人彂阿䅶多羅三藐三菩提心。應云何住。云何降伏其心。佛言。善哉。善哉。湏菩提。如汝所說。如来善護念諸菩薩。善付嘱諸菩薩。汝今諦聽。當為汝說。善男子善女人彂阿䅶多羅三藐三菩提心。應如是住。如是降伏其心。唯然世尊。樂欲聞
+          - generic [ref=f4e147]: 佛告。湏菩提。諸菩薩摩訶薩應如是降伏其心。所有一切衆生之類。若卵生若胎生。若濕生若化生。若有色若无色。若有想若無想。若非有想非无想。我皆令入無餘涅槃而滅度之。如是滅度無量。无數。無邊衆生。實无衆生得滅度者。何以故。湏菩提。若菩薩有我相。人相。衆生相。壽者相。即非菩薩。
+          - generic [ref=f4e148]: 復次。湏菩提。菩薩於法應無所住行於布施。所謂不住色布施。不住聲香味觸法布施。湏菩提。菩薩應如是布施。不住於相。何以故。若菩薩不住相布施。其福徳不可思量。湏菩提。於意云何。東方虚空可思量不。不也。世尊。湏菩提。南西北方。四維上下虚空可思量不。不也。世尊。湏菩提。菩薩無住相布施。福徳亦復如是不可思量。湏菩提。菩薩但應如所教住。
+          - generic [ref=f4e149]: 湏菩提。於意云何。可以身相見如来不。不也。世尊。不可以身相得見如来。何以故。如来所說身相。即非身相。佛告湏菩提。凡所有相。皆是虚妄。若見諸相非相。則見如来。
+          - generic [ref=f4e150]: 湏菩提白佛言。世尊。頗有衆生得聞如是言說章句。生實信不。佛告湏菩提。莫作是說。如来滅後後五百歲。有持戒修福者。於此章句能生信心。以此為實。當知是人不於一佛。二佛。三。四。五佛而種善根。巳於無量千万佛所種諸善根。聞是章句。乃至一念生淨信者。湏菩提。如来悉知悉見。是諸衆生得如是無量福徳。何以故。是諸衆生無復我相。人相。衆生相。壽者相。無法相。亦无非法相。何以故。是諸衆生若心取相。則為著我。人。衆生。壽者。若取法相。即著我。人。衆生。壽者。何以故。若取非法相。即著我。人。衆生。壽者。是故不應取法。不應取非法。以是義故。如来常說。汝等比丘。知我說法。如筏喻者。法尚應捨。何况非法。
+          - generic [ref=f4e151]: 湏菩提。於意云何。如来得阿䅶多羅三藐三菩提耶。如来有所說法耶。湏菩提言。如我解佛所說義。無有定法名阿䅶多羅三藐三菩提。亦无有定法如来可說。何以故。如来所說法。皆不可取。不可說。非法。非非法。所以者何。一切賢聖皆以無為法而有差別。湏菩提。於意云何。若人满三千大千世界七寳以用布施。是人所得福徳寧為多不。湏菩提言。甚多。世尊。何以故。是福徳即非福徳性。是故如来說福徳多。若復有人於此經中受持乃至四句偈等。為他人說。其福勝彼。何以故。湏菩提。一切諸佛及諸佛阿䅶多羅三藐三菩提法。皆従此經出。湏菩提。所謂佛法者。即非佛法。

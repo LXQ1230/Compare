@@ -27,7 +27,19 @@ app.add_middleware(
 )
 
 VALID_EXTENSIONS = frozenset({".txt", ".docx", ".md"})
-CHUNK_SIZE = 50
+# ~500 万汉字（UTF-8 约 3 字节/字）——超大文件上限，超限直接阻止（方案 L0/XL）
+COMPARE_MAX_BYTES = int(os.environ.get("COMPARE_MAX_BYTES", "15000000"))
+
+
+def _classify_scale(chars: int) -> str:
+    """按真实字符数分级（方案 L0）：S/M/L/XL。"""
+    if chars <= 100_000:
+        return "S"
+    if chars <= 500_000:
+        return "M"
+    if chars <= 5_000_000:
+        return "L"
+    return "XL"
 
 
 # ── Request schemas ───────────────────────────────────────────────
@@ -38,6 +50,14 @@ class AutosaveRequest(BaseModel):
     text: str = ""
     html: str = ""
     time: float = 0.0
+    cursor_pos: int = 0
+    scroll_pos: int = 0
+    last_edit_offset: int = -1
+    processed_cis: list = []
+    file_a_name: str = ""
+    file_b_name: str = ""
+    stats: dict = {}
+    total_chunks: int = 0
 
 
 class VersionSaveRequest(BaseModel):
@@ -97,7 +117,24 @@ def _parse_file(path: str, ext: str) -> str:
     )
 
 
-def _build_ndjson(segments: list[dict], stats: dict):
+def _iter_chunk_ranges(segments: list[dict], max_chars: int = 64 * 1024):
+    """按字符数切 chunk（每 chunk ≤64KB 文本），返回 (start, end) 索引对。
+
+    替代固定 50 段/块：百万段场景 JSON 解析次数从 2 万降到 ~200（方案 P1）。
+    """
+    start = 0
+    n = 0
+    for i, s in enumerate(segments):
+        n += len(s.get("text", ""))
+        if n >= max_chars:
+            yield start, i + 1
+            start = i + 1
+            n = 0
+    if start < len(segments):
+        yield start, len(segments)
+
+
+def _build_ndjson(segments: list[dict], stats: dict, scale: str):
     """Yield NDJSON lines for the streaming compare response."""
     yield json.dumps({
         "type": "phase",
@@ -113,19 +150,19 @@ def _build_ndjson(segments: list[dict], stats: dict):
         "progress": 50,
     }, ensure_ascii=False) + "\n"
 
-    total = (len(segments) + CHUNK_SIZE - 1) // CHUNK_SIZE if segments else 0
+    ranges = list(_iter_chunk_ranges(segments))
     yield json.dumps({
         "type": "meta",
         "stats": stats,
-        "totalChunks": total,
+        "totalChunks": len(ranges),
+        "scale": scale,
     }) + "\n"
 
-    for i in range(0, len(segments), CHUNK_SIZE):
-        idx = i // CHUNK_SIZE
+    for idx, (s, e) in enumerate(ranges):
         yield json.dumps({
             "type": "segments",
             "index": idx,
-            "data": segments[i:i + CHUNK_SIZE],
+            "data": segments[s:e],
         }, ensure_ascii=False) + "\n"
 
     yield json.dumps({"type": "done"}) + "\n"
@@ -162,6 +199,17 @@ async def compare(
         tmp_a.flush()
         tmp_b.flush()
 
+        # 超大文件上限（方案 L0/XL）：按上传字节数阻止，防内存 DoS
+        size_a = tmp_a.tell()
+        size_b = tmp_b.tell()
+        if size_a > COMPARE_MAX_BYTES or size_b > COMPARE_MAX_BYTES:
+            raise AppError(
+                Severity.BLOCKING,
+                "文件过大",
+                f"文件超过 {COMPARE_MAX_BYTES // 1_000_000}MB（约 500 万字）上限，请拆分后对比。",
+                status_code=413,
+            )
+
         text_a = _parse_file(tmp_a.name, ext_a)
         text_b = _parse_file(tmp_b.name, ext_b)
     finally:
@@ -174,8 +222,9 @@ async def compare(
                 pass
 
     segments, stats = diff_texts(text_a, text_b)
+    scale = _classify_scale(max(len(text_a), len(text_b)))
     return StreamingResponse(
-        _build_ndjson(segments, stats),
+        _build_ndjson(segments, stats, scale),
         media_type="application/x-ndjson",
     )
 
@@ -197,7 +246,14 @@ async def autosave(req: AutosaveRequest):
     action = req.action
 
     if action == "save":
-        am.save(req.key, text=req.text, html=req.html, timestamp=req.time)
+        am.save(
+            req.key, text=req.text, html=req.html, timestamp=req.time,
+            cursor_pos=req.cursor_pos, scroll_pos=req.scroll_pos,
+            last_edit_offset=req.last_edit_offset,
+            processed_cis=req.processed_cis,
+            file_a_name=req.file_a_name, file_b_name=req.file_b_name,
+            stats=req.stats, total_chunks=req.total_chunks,
+        )
         return {"status": "ok"}
 
     if action == "load":

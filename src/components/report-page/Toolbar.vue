@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useCompareStore } from '../../stores/compare';
 import { useViewStore } from '../../stores/view';
 import { useEditorStore } from '../../stores/editor';
@@ -9,12 +10,28 @@ const viewStore = useViewStore();
 const editorStore = useEditorStore();
 const searchStore = useSearchStore();
 
-function handleEditToggle(): void {
+/**
+ * 方案 P2：大文档（scale M/L）查看态由只读 CM 承接（Unified 语义），
+ * split 分栏仅小文档可用。
+ */
+const isLargeDoc = computed(() => {
+  const s = compareStore.meta?.scale;
+  return s === 'M' || s === 'L';
+});
+
+async function handleEditToggle(): Promise<void> {
   if (editorStore.isEditing) {
     editorStore.exitEdit();
   } else {
-    editorStore.enterEdit();
+    await editorStore.enterEdit();
   }
+}
+
+function jumpToLastEdit(): void {
+  const host = document.querySelector('.report-main') as
+    | (HTMLElement & { __cmScrollToLastEdit?: () => void })
+    | null;
+  host?.__cmScrollToLastEdit?.();
 }
 
 defineEmits<{ export: [] }>();
@@ -32,9 +49,25 @@ defineEmits<{ export: [] }>();
     </div>
     <div class="toolbar-right">
       <button class="tb-btn" @click="searchStore.toggle()" title="搜索 (Ctrl+F)">🔍 搜索</button>
-      <button class="tb-btn" @click="viewStore.toggleView()" title="切换视图">
+      <button
+        class="tb-btn" :disabled="isLargeDoc && !editorStore.isEditing"
+        @click="viewStore.toggleView()"
+        :title="isLargeDoc && !editorStore.isEditing ? '大文档仅支持统一视图' : '切换视图'"
+      >
         {{ viewStore.viewMode === 'unified' ? '⇶ 分栏' : '≡ 统一' }}
       </button>
+      <button
+        v-if="editorStore.isEditing"
+        class="tb-btn save-btn"
+        @click="editorStore.saveDraft()"
+        title="保存编辑草稿"
+      >💾 保存草稿</button>
+      <button
+        v-if="editorStore.isEditing && editorStore.lastEditOffset >= 0"
+        class="tb-btn"
+        @click="jumpToLastEdit"
+        title="跳到上次编辑位置"
+      >📍 上次编辑</button>
       <button
         class="tb-btn edit-btn" :class="{ active: editorStore.isEditing }"
         @click="handleEditToggle"
@@ -63,9 +96,15 @@ defineEmits<{ export: [] }>();
   border-radius: 6px; background: var(--color-bg); cursor: pointer;
 }
 .tb-btn:hover { background: var(--color-bg-hover); }
+.tb-btn:disabled { opacity: 0.4; cursor: default; }
+.tb-btn:disabled:hover { background: var(--color-bg); }
 .edit-btn.active {
   background: var(--color-user-add-bg);
   border-color: var(--color-user-add-text);
   color: var(--color-user-add-text);
+}
+.save-btn {
+  border-color: var(--color-focus-border);
+  color: var(--color-focus-border);
 }
 </style>
