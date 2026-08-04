@@ -17,3 +17,9 @@ autosaves/
 versions/
 .coverage
 fixtures/
+
+# Playwright MCP 测试残留
+.playwright-mcp/
+# 端到端验证截图
+*.png
+*.jpg
