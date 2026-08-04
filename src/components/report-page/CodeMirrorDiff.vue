@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed, onBeforeUnmount, nextTick } from "vue";
-import { EditorView, Decoration, DecorationSet, WidgetType } from "@codemirror/view";
+import { EditorView, Decoration, DecorationSet, WidgetType, highlightSpecialChars } from "@codemirror/view";
 import { EditorState, StateEffect, StateEffectType, StateField, RangeSetBuilder, Compartment, type Extension } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
 import { defaultKeymap, historyKeymap, history, undoDepth } from "@codemirror/commands";
@@ -9,6 +9,7 @@ import { useCompareStore } from "../../stores/compare";
 import { useEditorStore } from "../../stores/editor";
 import { useSearchStore } from "../../stores/search";
 import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings } from "../../render/editClassifier";
+import { normalizeText } from "../../render/unicode";
 import { mergeSegments } from "../../render/incrementalClassify";
 import { classifyInWorker, resetWorkerSession } from "../../utils/classifyWorker";
 import { searchInSegments } from "../../utils/search";
@@ -28,6 +29,10 @@ const confirmDiscard = ref(false);
  * 与编辑态共享同一 EditorView；通过 Compartment 动态切换 editable。
  */
 const editableCompartment = new Compartment();
+// 三期 B 组（4-6）：不可见字符显示开关（零宽/NBSP/控制字符）
+const invisibleCompartment = new Compartment();
+// 在 CM6 默认 special-char 集之上追加零宽字符/NBSP/补充控制符
+const INVISIBLE_EXTRA = /[\u00A0\u200B-\u200F\uFEFF]/g;
 const isViewCM = computed(
   () => !editorStore.isEditing
     && (compareStore.meta?.scale === "M" || compareStore.meta?.scale === "L"),
@@ -61,6 +66,8 @@ const MAX_UNDO_DEPTH = 500;
 let editorExtensions: Extension[] = [];
 /** editable 初始配置（只读查看态），压缩重建时按当前状态替换为对应配置。 */
 let editableInitialExt: Extension = EditorView.editable.of(false);
+/** 不可见字符显示开关初始配置（三期 B 组 4-6），压缩重建时按当前开关重建。 */
+let invisibleInitialExt: Extension = [];
 /** 压缩重建后跳过下一次 docChanged 的 classify（doc 文本实际未变）。 */
 let suppressClassifyNext = false;
 
@@ -429,7 +436,15 @@ function compressHistory(): void {
   const userSegs = editorStore.getEditedSegments();
   // 重建时保持当前 editable 状态（editorExtensions 初始为只读配置）
   const editableExt = editableCompartment.of(EditorView.editable.of(!v.state.readOnly));
-  const extensions = editorExtensions.map((e) => (e === editableInitialExt ? editableExt : e));
+  // 三期 B 组（4-6）：重建时按当前开关恢复不可见字符显示
+  const invisibleExt = invisibleCompartment.of(
+    editorStore.showInvisibleChars
+      ? highlightSpecialChars({ addSpecialChars: INVISIBLE_EXTRA })
+      : [],
+  );
+  const extensions = editorExtensions.map((e) => (
+    e === editableInitialExt ? editableExt : e === invisibleInitialExt ? invisibleExt : e
+  ));
   suppressSave = true;
   suppressClassifyNext = true;
   const newState = EditorState.create({
@@ -470,7 +485,9 @@ function ensureEditor() {
   const segs = editorStore.editSegments.length > 0
     ? editorStore.editSegments
     : compareStore.segments;
-  baseline = normalizeLineEndings(buildDocText(segs));
+  // 三期 B 组（4-5/4-7）：编辑态优先用 store 已变换的 originalBaseline
+  // （enterEdit 统一 BOM+LF+NFC+可选全角）；查看态用基础 normalizeText。
+  baseline = editorStore.originalBaseline || normalizeText(buildDocText(segs));
   cachedDocFingerprint = baseline;
   // Rev. edit-persistence: when resuming a draft, the edited text differs
   // from the baseline — use it as the initial doc instead of clobbering it.
@@ -479,7 +496,7 @@ function ensureEditor() {
     && editorStore.editText !== baseline;
   const initialDoc = hasDraft ? editorStore.editText : baseline;
   editorStore.editText = initialDoc;
-  diffSegmentsRef = segs.map((s) => ({ ...s, text: normalizeLineEndings(s.text) }));
+  diffSegmentsRef = segs.map((s) => ({ ...s, text: normalizeText(s.text) }));
   buildDiffSegMap();  // rev. A11: pre-compute baseline offsets for diff-layer rebuilds
 
   // Rev. D1/6-5: synchronous flush — run classify immediately so export
@@ -531,6 +548,12 @@ function ensureEditor() {
     history(), // CRITICAL: history() extension enables undo — historyKeymap alone is a no-op
     // 方案 P2: 初始只读（查看态），进入编辑时 reconfigure 为可编辑
     editableInitialExt = editableCompartment.of(EditorView.editable.of(false)),
+    // 三期 B 组（4-6）：不可见字符显示开关（零宽/NBSP/控制字符）
+    invisibleInitialExt = invisibleCompartment.of(
+      editorStore.showInvisibleChars
+        ? highlightSpecialChars({ addSpecialChars: INVISIBLE_EXTRA })
+        : [],
+    ),
     EditorView.lineWrapping,
     ...languageExtensions(), // rev. B4: markdown syntax highlighting
     EditorView.updateListener.of((update) => {
@@ -753,7 +776,8 @@ watch(
     const segs = editorStore.editSegments.length > 0
       ? editorStore.editSegments
       : compareStore.segments;
-    const freshBaseline = normalizeLineEndings(buildDocText(segs));
+    // 三期 B 组（4-5）：与 ensureEditor 同源（编辑态用 store 已变换值）
+    const freshBaseline = editorStore.originalBaseline || normalizeText(buildDocText(segs));
     // Rev. C3 guard: a NEW comparison produces different baseline text.
     // The cached view cannot be reused (its doc/history belong to the old
     // document), so tear it down and rebuild from scratch.
@@ -824,6 +848,20 @@ watch(
   () => { syncSearchDecos(); },
 );
 
+// 三期 B 组（4-6）：不可见字符显示开关实时 reconfigure
+watch(
+  () => editorStore.showInvisibleChars,
+  (on) => {
+    const v = view;
+    if (!v) return;
+    v.dispatch({
+      effects: invisibleCompartment.reconfigure(
+        on ? highlightSpecialChars({ addSpecialChars: INVISIBLE_EXTRA }) : [],
+      ),
+    });
+  },
+);
+
 onBeforeUnmount(() => {
   if (classifyTimer) clearTimeout(classifyTimer);
   if (bookmarkTimer) clearTimeout(bookmarkTimer);
@@ -848,6 +886,19 @@ onBeforeUnmount(() => {
       {{ editorStore.isEditing ? '编辑模式' : '对比视图（大文档）' }}
       <span class="hint">琥珀=新增 紫=删除 绿/红/黄=原始差异</span>
       <span class="font-ctrl">
+        <!-- 三期 B 组：不可见字符显示开关（4-6）+ 全角/半角偏好（4-7） -->
+        <button
+          class="font-btn"
+          :class="{ active: editorStore.showInvisibleChars }"
+          @click="editorStore.setShowInvisibleChars(!editorStore.showInvisibleChars)"
+          title="显示不可见字符（零宽/NBSP/控制字符）"
+        >¶</button>
+        <button
+          class="font-btn"
+          :class="{ active: editorStore.fullwidthHalfwidth }"
+          @click="editorStore.setFullwidthHalfwidth(!editorStore.fullwidthHalfwidth)"
+          title="全角/半角标点归一（进入编辑时生效）"
+        >全半</button>
         <button class="font-btn" @click="editorStore.adjustFontSize(-1)" title="缩小字体">A−</button>
         <span class="font-size-label">{{ editorStore.fontSize }}px</span>
         <button class="font-btn" @click="editorStore.adjustFontSize(1)" title="放大字体">A+</button>
@@ -918,6 +969,7 @@ onBeforeUnmount(() => {
   display: flex; align-items: center; justify-content: center;
 }
 .font-btn:hover { background: var(--color-bg-hover); }
+.font-btn.active { background: var(--color-focus-bg); border-color: var(--color-focus-border); color: var(--color-focus-border); }
 .font-size-label {
   font-size: 11px; color: var(--color-text-secondary); min-width: 32px; text-align: center;
 }

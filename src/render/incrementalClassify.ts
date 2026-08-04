@@ -14,9 +14,9 @@
  * 熔断：变化占比 >30%（或首次 / lastEdited 为空）→ 回退全量 classify。
  */
 
-import { diff_match_patch } from 'diff-match-patch';
 import type { Segment } from '@/types';
 import { isPhantomSegment } from './editClassifier';
+import { diffSafely } from './unicode';
 
 /** 熔断阈值：变化字符数 / 最大长度 > 此比例则回退全量 */
 export const INCR_CHANGE_RATIO = 0.3;
@@ -40,12 +40,9 @@ export interface ClassifyIncrementalResult {
   to: number;
 }
 
-/** 与 classifyEdit 完全一致的分类逻辑（DMP rawDiff → user segments）。 */
+/** 与 classifyEdit 完全一致的分类逻辑（DMP rawDiff → user segments，rev. 4-4 surrogate 安全）。 */
 function classifyCore(baseline: string, edited: string): Segment[] {
-  const dmp = new diff_match_patch();
-  dmp.Diff_Timeout = 0;
-  const rawDiffs = dmp.diff_main(baseline, edited);
-  dmp.diff_cleanupSemantic(rawDiffs);
+  const rawDiffs = diffSafely(baseline, edited);
 
   const segments: Segment[] = [];
   let ci = 0;
@@ -255,11 +252,8 @@ export function classifyIncremental(
   const baseWin = baseline.slice(Math.max(0, bwStart), Math.min(baseline.length, bwEnd));
   const editWin = edited.slice(Math.max(0, weStart), Math.min(edited.length, weEnd));
 
-  // 5. 窗口内局部 DMP
-  const dmp = new diff_match_patch();
-  dmp.Diff_Timeout = 0;
-  const rawDiffs = dmp.diff_main(baseWin, editWin);
-  dmp.diff_cleanupSemantic(rawDiffs);
+  // 5. 窗口内局部 DMP（rev. 4-4 surrogate 安全）
+  const rawDiffs = diffSafely(baseWin, editWin);
 
   // 局部段转 user segments（ci 本地编号，合并时由 renumberCi 统一重编号）
   const local: Segment[] = [];

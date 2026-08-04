@@ -4,6 +4,7 @@ import type { Segment, ChangeContext, EditSessionDraft } from "@/types";
 import { asSegmentId } from "@/types";
 import { useCompareStore } from "./compare";
 import { buildDocText, normalizeLineEndings } from "@/render/editClassifier";
+import { normalizeText, normalizeFullwidth } from "@/render/unicode";
 import { storage } from "@/utils/storage";
 import { api } from "@/utils/api";
 import { fnv1aHash } from "@/utils/hash";
@@ -52,6 +53,32 @@ export const useEditorStore = defineStore("editor", () => {
 
   function adjustFontSize(delta: number): void {
     setFontSize(fontSize.value + delta);
+  }
+
+  // ── Unicode 偏好（三期 B 组）──────────────────────────────────
+  // showInvisibleChars: CM 中可视化零宽/NBSP/控制字符（4-6）
+  // fullwidthHalfwidth: 全角标点→半角，仅进入编辑模式时对基线/初始 doc 生效（4-7）
+  const showInvisibleChars = ref(localStorage.getItem("cmp-invisible") === "1");
+  const fullwidthHalfwidth = ref(localStorage.getItem("cmp-fullwidth") === "1");
+
+  function setShowInvisibleChars(v: boolean): void {
+    showInvisibleChars.value = v;
+    localStorage.setItem("cmp-invisible", v ? "1" : "0");
+  }
+
+  function setFullwidthHalfwidth(v: boolean): void {
+    fullwidthHalfwidth.value = v;
+    localStorage.setItem("cmp-fullwidth", v ? "1" : "0");
+  }
+
+  /**
+   * 三期 B 组（4-5/4-7）初始化统一变换：BOM+LF+NFC（必做）+ 可选全角→半角。
+   * 仅用于「进入编辑模式时的基线/初始 doc」——classifyEdit 运行期输入即输出，
+   * 避免 segments 与 doc 长度不一致导致装饰偏移错位（见 unicode.ts 一致性约定）。
+   */
+  function applyNormalizations(text: string): string {
+    const t = normalizeText(text);
+    return fullwidthHalfwidth.value ? normalizeFullwidth(t) : t;
   }
 
   /** Monotonic token — bumped by resetToOriginal so CodeMirrorDiff can clear user decorations (rev. C2). */
@@ -149,7 +176,8 @@ export const useEditorStore = defineStore("editor", () => {
     // 1. Try IndexedDB first (方案 L5/P4: 草稿主体)
     let draft: EditSessionDraft | null = await storage.loadEditDraft(draftKey.value);
     // 方案 L5：IndexedDB 草稿不含 baseline，用本地重建（key 相同 → 同对比）
-    const localBaseline = normalizeLineEndings(buildDocText(compareStore.segments));
+    // 三期 B 组：初始化统一变换（BOM+LF+NFC，可选全角→半角）
+    const localBaseline = applyNormalizations(buildDocText(compareStore.segments));
     if (draft) draft = { ...draft, baseline: localBaseline };
 
     // 2. Try backend (cross-device backup; backend wins if newer)
@@ -197,8 +225,9 @@ export const useEditorStore = defineStore("editor", () => {
     } else {
       // No draft — fresh edit session
       editSegments.value = cloneSegments(compareStore.segments);
-      editText.value = normalizeLineEndings(buildDocText(editSegments.value));
-      originalBaseline.value = normalizeLineEndings(buildDocText(compareStore.segments));
+      // 三期 B 组：初始 doc 与 baseline 同变换（保证一致性）
+      editText.value = applyNormalizations(buildDocText(editSegments.value));
+      originalBaseline.value = applyNormalizations(buildDocText(compareStore.segments));
       workerSegments.value = null;
     }
     isEditing.value = true;
@@ -209,8 +238,8 @@ export const useEditorStore = defineStore("editor", () => {
     hasPendingDraft.value = false;
     pendingDraft.value = null;
     editSegments.value = cloneSegments(compareStore.segments);
-    editText.value = normalizeLineEndings(buildDocText(editSegments.value));
-    originalBaseline.value = normalizeLineEndings(buildDocText(compareStore.segments));
+    editText.value = applyNormalizations(buildDocText(editSegments.value));
+    originalBaseline.value = applyNormalizations(buildDocText(compareStore.segments));
     hasEdits.value = false;
     cursorPos.value = 0;
     scrollPos.value = 0;
@@ -243,8 +272,10 @@ export const useEditorStore = defineStore("editor", () => {
     editSegments.value = cloneSegments(draft.segments && draft.segments.length > 0
       ? draft.segments
       : compareStore.segments);
+    // 草稿 editText 是保存时的原文（已是本会话变换后），不重变换；
+    // 仅当 baseline 缺失时按当前偏好重建（三期 B 组）。
     editText.value = draft.editText;
-    originalBaseline.value = draft.baseline || normalizeLineEndings(buildDocText(editSegments.value));
+    originalBaseline.value = draft.baseline || applyNormalizations(buildDocText(editSegments.value));
     hasEdits.value = draft.hasEdits;
     cursorPos.value = draft.cursorPos ?? 0;
     scrollPos.value = draft.scrollPos ?? 0;
@@ -322,6 +353,8 @@ export const useEditorStore = defineStore("editor", () => {
   return {
     isEditing, editSegments, editText, hasEdits, originalBaseline, resetToken,
     fontSize, setFontSize, adjustFontSize,
+    showInvisibleChars, setShowInvisibleChars,
+    fullwidthHalfwidth, setFullwidthHalfwidth,
     cursorPos, scrollPos, lastEditOffset, processedCis,
     draftKey, hasPendingDraft, pendingDraft,
     workerSegments, workerVersion, setWorkerResult,
