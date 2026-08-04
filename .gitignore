@@ -23,3 +23,6 @@ fixtures/
 # 端到端验证截图
 *.png
 *.jpg
+
+# Vite 临时文件
+vite.config.ts.timestamp-*.mjs
