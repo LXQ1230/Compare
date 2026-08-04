@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useCompareStore } from '../stores/compare';
 import { useViewStore } from '../stores/view';
 import { useEditorStore } from '../stores/editor';
 import { useSearchStore } from '../stores/search';
 import { useVersionStore } from '../stores/version';
 import { useKeyboardShortcuts } from '../utils/keybindings';
+import { storage } from '../utils/storage';
+import { fnv1aHash } from '../utils/hash';
+import type { SegmentId } from '../types';
 import Toolbar from '../components/report-page/Toolbar.vue';
 import ProgressHeader from '../components/report-page/ProgressHeader.vue';
 import SearchBar from '../components/report-page/SearchBar.vue';
@@ -17,6 +21,8 @@ import ErrorDisplay from '../components/report-page/ErrorDisplay.vue';
 import ExportDialog from '../components/report-page/ExportDialog.vue';
 import VersionHistory from '../components/report-page/VersionHistory.vue';
 
+const route = useRoute();
+const router = useRouter();
 const compareStore = useCompareStore();
 const viewStore = useViewStore();
 const searchStore = useSearchStore();
@@ -25,6 +31,46 @@ const versionStore = useVersionStore();
 
 const isExportDialogVisible = ref(false);
 const showVersions = ref(false);
+
+/**
+ * Rev. 5-3: hard-reload recovery. On mount, if the store has no data for the
+ * session id in the URL, re-derive the id from persisted meta (localStorage)
+ * and restore segments from IndexedDB. Falls back to the select page when the
+ * session is gone (e.g. a stale bookmark after clearAll).
+ */
+onMounted(async () => {
+  const sid = String(route.params.sessionId ?? '');
+  if (!sid) {
+    router.replace('/');
+    return;
+  }
+  // Normal entry: store already holds this session (startCompare / resumeDraft).
+  if (compareStore.segments.length > 0 && compareStore.sessionId === sid) return;
+
+  const meta = storage.loadMeta();
+  const computed = meta
+    ? fnv1aHash(`${meta.fileA}\u0000${meta.fileB}\u0000${meta.timestamp}`)
+    : '';
+  if (meta && computed === sid) {
+    try {
+      const rows = await storage.loadSegments();
+      const segs = rows.flat();
+      if (segs.length > 0) {
+        compareStore.restoreFromDraft(segs, {
+          fileAName: meta.fileA,
+          fileBName: meta.fileB,
+          timestamp: meta.timestamp,
+          stats: meta.stats,
+          totalChunks: meta.totalChunks,
+        });
+        return;
+      }
+    } catch {
+      /* fall through to the select page */
+    }
+  }
+  router.replace('/');
+});
 
 /**
  * 方案 P2：大文档（scale M/L）查看态由只读 CodeMirror 承接（虚拟行渲染），
@@ -71,11 +117,11 @@ useKeyboardShortcuts({
 
 const activeContextIdx = ref(-1);
 
-function scrollToContext(ctx: { index: number }): void {
+function scrollToContext(ctx: { index: SegmentId }): void {
   // Rev. E3 + 方案 P2: 编辑模式或大文档查看态都走 CodeMirror 通道
   // (__cmScrollToCi)，否则经典 ci-N DOM 锚点。
   const host = document.querySelector('.report-main') as
-    | (HTMLElement & { __cmScrollToCi?: (ci: number) => void })
+    | (HTMLElement & { __cmScrollToCi?: (ci: SegmentId) => void })
     | null;
   if ((editorStore.isEditing || isLargeDoc.value) && host?.__cmScrollToCi) {
     host.__cmScrollToCi(ctx.index);

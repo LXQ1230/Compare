@@ -13,6 +13,7 @@ import { mergeSegments } from "../../render/incrementalClassify";
 import { classifyInWorker, resetWorkerSession } from "../../utils/classifyWorker";
 import { searchInSegments } from "../../utils/search";
 import type { Segment } from "@/types";
+import { asSegmentId, type SegmentId } from "@/types";
 
 const compareStore = useCompareStore();
 const editorStore = useEditorStore();
@@ -48,7 +49,7 @@ interface DiffSegInfo {
   isPhantom: boolean;
 }
 let diffSegMap: DiffSegInfo[] = [];
-let segOffsets: Array<{ ci: number; start: number; end: number }> = []; // ci → doc offset (rev. A8)
+let segOffsets: Array<{ ci: SegmentId; start: number; end: number }> = []; // ci → doc offset (rev. A8)
 let cachedDocFingerprint = ""; // doc-text hash of the cached view (rev. C3 guard)
 /** 编辑版本号（方案 L4）：每次 classify 递增，Worker 过期结果按此丢弃。 */
 let editVersion = 0;
@@ -678,30 +679,30 @@ function ensureEditor() {
 function buildOffsetMap(): void {
   segOffsets = [];
   let pos = 0;
-  let ci = 0;
+  let ci: SegmentId = asSegmentId(0);
   const segs = editorStore.editSegments.length > 0 ? editorStore.editSegments : compareStore.segments;
   for (const s of segs) {
     if (!isDocSegment(s)) continue;
     const len = s.text.length;
     if (s.ci != null) {
-      ci = s.ci;
+      ci = asSegmentId(s.ci);
       segOffsets.push({ ci, start: pos, end: pos + len });
     }
     pos += len;
   }
   // Fallback: if no ci available, index changed segments sequentially
   if (segOffsets.length === 0) {
-    pos = 0; ci = 0;
+    pos = 0; ci = asSegmentId(0);
     for (const s of segs) {
       if (!isDocSegment(s)) { pos += s.text.length; continue; }
-      ci++;
+      ci = asSegmentId(ci + 1);
       segOffsets.push({ ci, start: pos, end: pos + s.text.length });
       pos += s.text.length;
     }
   }
 }
 
-function scrollToCi(ci: number): void {
+function scrollToCi(ci: SegmentId): void {
   const v = view;
   if (!v) return;
   const target = segOffsets.find((o) => o.ci === ci);
@@ -732,7 +733,7 @@ function exposeNavigation(): void {
   const el = containerRef.value?.closest(".report-main") ?? null;
   if (!el) return;
   const ns = el as HTMLElement & {
-    __cmScrollToCi?: (ci: number) => void;
+    __cmScrollToCi?: (ci: SegmentId) => void;
     __cmScrollToLastEdit?: () => void;
   };
   ns.__cmScrollToCi = scrollToCi;

@@ -5,8 +5,10 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import type { Segment, CompareMeta, CompareStats, ErrorEnvelope, StreamMessage, ChangeContext } from '@/types';
+import { asSegmentId } from '@/types';
 import { api } from '@/utils/api';
 import { storage } from '@/utils/storage';
+import { fnv1aHash } from '@/utils/hash';
 
 export const useCompareStore = defineStore('compare', () => {
   const segments = ref<Segment[]>([]);
@@ -17,6 +19,10 @@ export const useCompareStore = defineStore('compare', () => {
   const isComplete = ref(false);
   const currentPhase = ref('');
   const progress = ref(0);
+  // Rev. 5-3: stable identity for the current compare session, carried in the
+  // URL (/report/:sessionId). Derived from file names + timestamp so a hard
+  // reload can re-derive it from persisted meta and validate the URL.
+  const sessionId = ref('');
 
   const stats = computed<CompareStats>(() => meta.value?.stats ?? { total: 0, add: 0, del: 0, mod: 0 });
   const fileAName = computed(() => meta.value?.fileA ?? '');
@@ -31,6 +37,16 @@ export const useCompareStore = defineStore('compare', () => {
     isComplete.value = false;
     currentPhase.value = '';
     progress.value = 0;
+    sessionId.value = '';
+  }
+
+  /**
+   * Stable session id for a (fileA, fileB, timestamp) triple — must match
+   * everywhere a session is created or resumed (startCompare / restoreFromDraft)
+   * so the /report/:sessionId URL stays valid across reloads.
+   */
+  function computeSessionId(fileA: string, fileB: string, timestamp: number): string {
+    return fnv1aHash(`${fileA}\u0000${fileB}\u0000${timestamp}`);
   }
 
   /**
@@ -89,6 +105,8 @@ export const useCompareStore = defineStore('compare', () => {
             };
             // 方案 P5：meta 到达即生效（stats/scale 立即可用，不等全流程结束）
             meta.value = receivedMeta;
+            // Rev. 5-3: session id available as soon as meta lands
+            sessionId.value = computeSessionId(receivedMeta.fileA, receivedMeta.fileB, receivedMeta.timestamp);
             break;
           case 'segments':
             // 边收边 push（方案 P1）：不再累积 collectedSegments 后 flatMap，
@@ -138,6 +156,9 @@ export const useCompareStore = defineStore('compare', () => {
     // Persist to local storage (fire-and-forget — best-effort).
     if (segments.value.length > 0 && receivedMeta) {
       storage.saveMeta(receivedMeta);
+      // Rev. 5-8: clear the previous session's rows first so stale segments
+      // can never leak into a resumed session after reload.
+      await storage.clearSegments().catch(() => {});
       storage.saveSegments(collectedChunks).catch(() => { /* best-effort */ });
     }
 
@@ -165,6 +186,9 @@ export const useCompareStore = defineStore('compare', () => {
     isComparing.value = false;
     isComplete.value = true;
     error.value = null;
+    // Rev. 5-3: derive the session id from the same triple so the resumed
+    // URL (/report/:sessionId) matches what SelectPage pushes.
+    sessionId.value = computeSessionId(draft.fileAName, draft.fileBName, draft.timestamp);
     buildContexts();
   }
 
@@ -206,7 +230,7 @@ export const useCompareStore = defineStore('compare', () => {
       const after = segments.value.slice(i + 1, i + 3).map((x) => x.text).join('').slice(0, 40);
 
       result.push({
-        index: ci,
+        index: asSegmentId(ci),
         total: stats.value.total,
         type,
         side: s.side,
@@ -224,7 +248,7 @@ export const useCompareStore = defineStore('compare', () => {
   return {
     segments, contexts, meta, error,
     isComparing, isComplete, currentPhase, progress,
-    stats, fileAName, fileBName,
+    stats, fileAName, fileBName, sessionId,
     reset, startCompare, buildContexts, restoreFromDraft,
   };
 });

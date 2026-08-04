@@ -1,5 +1,18 @@
 export type DiffOpType = '=' | '+' | '-'
 
+/**
+ * 变更序号（change-index）—— branded number（rev. 5-6）。
+ * Segment.ci / ChangeContext.index 与 total / lineA / lineB 等普通数字
+ * 语义不同（都是 number），branded type 在编译期防止混淆
+ * （如把 stats.total 当 index 传给跳转通道）。
+ * 存储与反序列化边界（IndexedDB / 后端 JSON）仍是 number，构造时用 asSegmentId()。
+ */
+export type SegmentId = number & { readonly __brand: 'segment-id' }
+
+export function asSegmentId(n: number): SegmentId {
+  return n as SegmentId
+}
+
 export interface DiffOp {
   type: DiffOpType
   text: string
@@ -21,7 +34,7 @@ export interface Segment {
 }
 
 export interface ChangeContext {
-  index: number
+  index: SegmentId
   total: number
   type: 'add' | 'del' | 'mod'
   /** For mod segments, which side of the pair. */

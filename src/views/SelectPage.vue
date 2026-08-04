@@ -114,7 +114,7 @@ async function resumeDraft(draft: EditSessionDraft): Promise<void> {
     }
     compareStore.restoreFromDraft(segs, full);
     editorStore.resumeFromDraft(full);
-    router.push('/report');
+    router.push(`/report/${compareStore.sessionId}`);
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '恢复草稿失败';
   } finally {
@@ -172,7 +172,7 @@ async function startCompare() {
   isStarting.value = true;
   try {
     await compareStore.startCompare(fileA.value, fileB.value);
-    router.push('/report');
+    router.push(`/report/${compareStore.sessionId}`);
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '对比失败';
   } finally {

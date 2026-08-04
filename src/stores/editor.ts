@@ -1,23 +1,15 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { Segment, ChangeContext, EditSessionDraft } from "@/types";
+import { asSegmentId } from "@/types";
 import { useCompareStore } from "./compare";
 import { buildDocText, normalizeLineEndings } from "@/render/editClassifier";
 import { storage } from "@/utils/storage";
 import { api } from "@/utils/api";
+import { fnv1aHash } from "@/utils/hash";
 
 function cloneSegments(src: Segment[]): Segment[] {
   return src.map((s) => ({ ...s }));
-}
-
-/** Simple synchronous hash (FNV-1a) — fast, no async crypto needed. */
-function fnv1aHash(str: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = (hash * 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
 }
 
 export const useEditorStore = defineStore("editor", () => {
@@ -322,7 +314,7 @@ export const useEditorStore = defineStore("editor", () => {
       if (s.operation === "none") continue;
       ci++;
       const type = s.operation === "add" ? "add" : s.operation === "del" ? "del" : "mod";
-      result.push({ index: ci, total: editedStats.value.total, type, side: s.side, lineA: 0, lineB: 0, before: "", highlight: s.text, after: "" });
+      result.push({ index: asSegmentId(ci), total: editedStats.value.total, type, side: s.side, lineA: 0, lineB: 0, before: "", highlight: s.text, after: "" });
     }
     return result;
   });
