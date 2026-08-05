@@ -49,7 +49,7 @@ function onDragLeave(e: DragEvent): void {
       }"
     />
     <p class="drop-text">拖拽文件到此处，或点击选择</p>
-    <p class="drop-sub">支持 .txt / .docx / .md 格式</p>
+    <p class="drop-sub">支持 .txt / .docx / .md / .idml 格式</p>
   </div>
 </template>
 

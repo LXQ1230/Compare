@@ -17,8 +17,22 @@
  * (concatenating non-phantom segments yields the applied final document).
  */
 
-import type { Segment } from '@/types';
+import type { Segment, StyleRange } from '@/types';
 import { isPhantomSegment, normalizeLineEndings } from '@/render/editClassifier';
+
+/** 按 [from, to)（相对段文本）裁剪 style 区间，偏移转段内相对值（方案 §6.7）。 */
+function sliceStyles(style: StyleRange[] | undefined, from: number, to: number): StyleRange[] | undefined {
+  if (!style || style.length === 0 || to <= from) return undefined;
+  const out: StyleRange[] = [];
+  for (const sp of style) {
+    if (sp.end <= from) continue;
+    if (sp.start >= to) break;
+    const ss = Math.max(sp.start, from);
+    const ee = Math.min(sp.end, to);
+    if (ee > ss) out.push({ ...sp, start: ss - from, end: ee - from });
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 interface PlacedSegment {
   seg: Segment;
@@ -66,6 +80,15 @@ export function mergeLayers(original: Segment[], user: Segment[]): Segment[] {
   let off = 0; // consumed text offset inside placed[p]
   let pp = 0; // phantom cursor
   let ci = 0; // renumbered change index (unique across both layers)
+  // IDML：最近发出段末尾的样式（方案 §6.7 方案 A——user 段继承前邻样式，
+  // 编辑在割注内 → 新字也成割注，视觉连续）。非 IDML 恒为 null（零影响）。
+  let lastStyleProps: StyleRange | null = null;
+
+  /** user 段继承前邻样式（§6.7 方案 A：整段使用前邻样式属性，偏移重置）。 */
+  const inheritStyle = (seg: Segment): Segment => {
+    if (!lastStyleProps || !seg.text) return seg;
+    return { ...seg, style: [{ ...lastStyleProps, start: 0, end: seg.text.length }] };
+  };
 
   /** Emit queued phantoms whose anchor segment has already been emitted. */
   const emitPhantoms = (maxAnchor: number): void => {
@@ -126,11 +149,18 @@ export function mergeLayers(original: Segment[], user: Segment[]): Segment[] {
       if (a < b) {
         emitPhantoms(p);
         const rel = a - ps.start;
+        // IDML：text 切片后 style 区间同步裁剪（§6.7）
+        const slicedStyle = sliceStyles(ps.seg.style, rel, rel + (b - a));
         out.push({
           ...ps.seg,
           text: ps.seg.text.slice(rel, rel + (b - a)),
+          style: slicedStyle,
           ci: ps.seg.operation === 'none' ? undefined : ++ci,
         });
+        // 继承基准 = 本次切片的最后样式区间（§6.7 方案 A 前邻样式）
+        if (slicedStyle && slicedStyle.length > 0) {
+          lastStyleProps = slicedStyle[slicedStyle.length - 1];
+        }
       }
       if (ps.end <= b) {
         p++;
@@ -151,11 +181,11 @@ export function mergeLayers(original: Segment[], user: Segment[]): Segment[] {
     if (us.operation === 'del' || (us.operation === 'mod' && us.side === 'old')) {
       consumeTo(basePos + us.text.length);
       basePos += us.text.length;
-      out.push({ ...us, ci: ++ci });
+      out.push(inheritStyle({ ...us, ci: ++ci }));
       continue;
     }
     // add / mod-new — inserted text consumes no baseline
-    out.push({ ...us, ci: ++ci });
+    out.push(inheritStyle({ ...us, ci: ++ci }));
   }
 
   // Trailing phantoms anchored after the last placed segment.

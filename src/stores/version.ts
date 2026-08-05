@@ -4,7 +4,7 @@
 
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { VersionEntry } from '@/types';
+import type { VersionEntry, StyleRange } from '@/types';
 import { api } from '@/utils/api';
 import { storage } from '@/utils/storage';
 
@@ -22,11 +22,11 @@ export const useVersionStore = defineStore('version', () => {
     }
   }
 
-  async function saveVersion(label: string, fileAContent: string, fileBContent: string, stats: Record<string, number>): Promise<string | null> {
+  async function saveVersion(label: string, fileAContent: string, fileBContent: string, stats: Record<string, number>, styleA?: StyleRange[], styleB?: StyleRange[], docMeta?: Record<string, unknown>): Promise<string | null> {
     isSaving.value = true;
     error.value = null;
     try {
-      const result = await api.versionSave({ label, file_a_content: fileAContent, file_b_content: fileBContent, stats });
+      const result = await api.versionSave({ label, file_a_content: fileAContent, file_b_content: fileBContent, stats, style_a: styleA, style_b: styleB, doc_meta: docMeta });
       const entry: VersionEntry = { id: result.id, label, time: Date.now() };
       versions.value.unshift(entry);
       storage.saveVersions(versions.value);

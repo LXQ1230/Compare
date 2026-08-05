@@ -40,11 +40,17 @@ class VersionManager:
     def save(
         self, label: str, file_a_content: str,
         file_b_content: str, stats: dict,
+        style_a: list | None = None,
+        style_b: list | None = None,
+        doc_meta: dict | None = None,
     ) -> str:
         """Persist a version and return its id. Auto-cleans oldest if >10.
 
         后续版本相对"最新版本"存 patch（a_parent/b_parent 指向最新 id），
         首个版本存全量（parent 为 None）。
+        style_a/style_b：IDML 样式区间（方案 §6.6 链路 1，全量存——
+        版本数量少、仅 IDML 携带，非 IDML 为空列表零开销）。
+        doc_meta：IDML 排版元数据（竖排/行高，随版本恢复）。
         """
         version_id = uuid.uuid4().hex[:12]
         prev_id, prev_a, prev_b = self._latest_full()
@@ -63,6 +69,9 @@ class VersionManager:
             "a_parent": a_parent, "a_text": a_text,
             "b_parent": b_parent, "b_text": b_text,
             "stats": stats,
+            "style_a": style_a or [],
+            "style_b": style_b or [],
+            "doc_meta": doc_meta or {},
         }
         path = self._dir / f"{version_id}.json"
         # 方案 P3-2: 原子写入——先写同目录 tmp 再 os.replace，避免半截文件
@@ -157,6 +166,9 @@ class VersionManager:
             "time": entry["time"], "file_a_content": file_a,
             "file_b_content": file_b,
             "stats": entry.get("stats", {}),
+            "style_a": entry.get("style_a", []),
+            "style_b": entry.get("style_b", []),
+            "doc_meta": entry.get("doc_meta", {}),
         }
 
     # ── cleanup ───────────────────────────────────────────────────

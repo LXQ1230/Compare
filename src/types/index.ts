@@ -31,12 +31,53 @@ export type SegmentOrigin = 'original' | 'user' | 'restored'
 /** 文档规模分级（方案 L0）：S≤10万 / M≤50万 / L≤500万 / XL>500万 */
 export type ScaleLevel = 'S' | 'M' | 'L' | 'XL'
 
+/**
+ * 字符级样式区间（方案 §4.2，IDML 专属，可选字段）。
+ * start/end 为相对所属 segment.text 的字符偏移（含/不含）。
+ * 非 IDML 文件无此字段——零解析、零体积开销。
+ */
+export interface StyleRange {
+  start: number
+  end: number
+  /** 映射后的 CSS font-family（font_map.py 三级映射） */
+  font?: string
+  /** 字号 pt（正文默认 28 省略） */
+  sizePt?: number
+  /** FontStyle Heavy/Bold → bold */
+  bold?: boolean
+  /** FillColor 映射（Registration→#C00000，CMYK→hex） */
+  color?: string
+  /** 割注（Warichu 双排小字）标记 */
+  warichu?: boolean
+  /** 割注百分比（40/60），字号 = sizePt × warichuSize/100 */
+  warichuSize?: number
+  /** 悬挂等基线偏移 pt（BaselineShift） */
+  baselineShift?: number
+}
+
 export interface Segment {
   text: string
   operation: SegmentOp
   origin: SegmentOrigin
   side?: 'old' | 'new'
   ci?: number
+  /** 仅 IDML 文件携带；样式区间（相对本段文本偏移） */
+  style?: StyleRange[]
+}
+
+/**
+ * 文档级排版元数据（方案 §5.3，随 NDJSON meta 行传输）。
+ * IDML：竖排/行高系数/首行缩进/字体告警；非 IDML 不传输。
+ */
+export interface DocMeta {
+  /** 竖排（StoryOrientation="Vertical"） */
+  vertical?: boolean
+  /** 行高系数（Leading/PointSize，如 43/28≈1.536） */
+  leadingRatio?: number
+  /** 首行缩进 pt（FirstLineIndent） */
+  firstLineIndent?: number
+  /** 不可用字体回退告警 */
+  fontsUnavailable?: string[]
 }
 
 export interface ChangeContext {
@@ -63,6 +104,8 @@ export interface CompareMeta {
   totalChunks: number
   /** 文档规模分级（方案 L0），后端按真实字符数计算 */
   scale?: ScaleLevel
+  /** IDML 排版元数据（方案 §5.3；非 IDML 无此字段） */
+  docMeta?: DocMeta
 }
 
 export interface CompareStats {
@@ -79,7 +122,7 @@ export interface EditedStats extends CompareStats {
 
 export type StreamMessage =
   | { type: 'phase'; stage: string; detail: string; progress: number }
-  | { type: 'meta'; stats: CompareStats; totalChunks: number; scale?: ScaleLevel }
+  | { type: 'meta'; stats: CompareStats; totalChunks: number; scale?: ScaleLevel; docMeta?: DocMeta }
   | { type: 'segments'; index: number; data: Segment[] }
   | { type: 'done' }
 
@@ -114,6 +157,11 @@ export interface EditSessionDraft {
   editText: string
   /** 进入编辑时的基线（用于恢复时校验） */
   baseline: string
+  /**
+   * 基线文本的 B 侧样式（方案 §6.6 链路 2：随 baseline 同生命周期存储）。
+   * IDML 会话恢复编辑态 styleDeco 时使用；非 IDML 无此字段。
+   */
+  baselineStyle?: StyleRange[]
   hasEdits: boolean
   /** CodeMirror 光标 anchor offset */
   cursorPos: number

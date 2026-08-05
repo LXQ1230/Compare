@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-VALID_EXTENSIONS = frozenset({".txt", ".docx", ".md"})
+VALID_EXTENSIONS = frozenset({".txt", ".docx", ".md", ".idml"})
 MD_MIN_LENGTH = 3
 
 
@@ -30,7 +30,7 @@ def validate_file(filename: str, content: str) -> dict:
         return {
             "valid": False,
             "format": ext.lstrip("."),
-            "errors": [f"不支持 {ext} 格式，仅支持 .txt, .docx, .md。"],
+            "errors": [f"不支持 {ext} 格式，仅支持 .txt, .docx, .md, .idml。"],
         }
 
     fmt = ext.lstrip(".")

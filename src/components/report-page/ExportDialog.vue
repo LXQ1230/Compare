@@ -76,6 +76,8 @@ function doExport(formatId: string, filename: string) {
   flushEdits();
 
   let content: string;
+  // IDML：排版元数据随导出（§6.7 方案 A——HTML 竖排/行高容器）
+  const docMeta = compareStore.meta?.docMeta;
   if (editorStore.isEditing) {
     // 编辑模式导出：同时应用「查看模式的对比差异」与「用户编辑」两层修改。
     // 编辑器基线 = 应用原始对比差异后的文本，其当前内容 = 应用两层修改后的最终文档。
@@ -83,7 +85,7 @@ function doExport(formatId: string, filename: string) {
     const edited = normalizeLineEndings(editorStore.editText);
     if (formatId === 'txt') {
       // 纯文本：输出干净最终文档（无标记概念）。
-      content = edited;
+      content = edited.replaceAll('\u2029', '\n');
     } else {
       // HTML/MD：合成「完整文档的带标记 segments」——
       // 未编辑区域保留原始 add/del/mod 标记，编辑区域只显示用户编辑标记（用户覆盖原始）。
@@ -92,11 +94,11 @@ function doExport(formatId: string, filename: string) {
         compareStore.segments,
         userResult.dirty ? userResult.segments : [],
       );
-      content = formatId === 'html' ? exportToHTML(merged) : exportToMD(merged);
+      content = formatId === 'html' ? exportToHTML(merged, undefined, docMeta) : exportToMD(merged);
     }
   } else {
     const segments = compareStore.segments;
-    if (formatId === 'html') content = exportToHTML(segments);
+    if (formatId === 'html') content = exportToHTML(segments, undefined, docMeta);
     else if (formatId === 'md') content = exportToMD(segments);
     else content = exportToTXT(segments);
   }

@@ -1,9 +1,9 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { Segment, ChangeContext, EditSessionDraft } from "@/types";
+import type { Segment, ChangeContext, EditSessionDraft, StyleRange } from "@/types";
 import { asSegmentId } from "@/types";
 import { useCompareStore } from "./compare";
-import { buildDocText, normalizeLineEndings } from "@/render/editClassifier";
+import { buildDocText, buildBaselineStyles, normalizeLineEndings } from "@/render/editClassifier";
 import { normalizeText, normalizeFullwidth } from "@/render/unicode";
 import { storage } from "@/utils/storage";
 import { api } from "@/utils/api";
@@ -49,6 +49,12 @@ export const useEditorStore = defineStore("editor", () => {
   const draftKey = ref("");
   const hasPendingDraft = ref(false);
   const pendingDraft = ref<EditSessionDraft | null>(null);
+  /**
+   * 基线文本的全文偏移样式区间（方案 §6.6 链路 2：IDML 编辑态 styleDeco 来源）。
+   * 保存草稿时随 draft.baselineStyle 持久化；恢复时重建编辑态样式装饰。
+   * 非 IDML 为空数组（零开销）。
+   */
+  const baselineStyle = ref<StyleRange[] | undefined>(undefined);
 
   /** Editor font size in pixels — persisted to localStorage (range 12–24, default 16). */
   const fontSize = ref<number>(
@@ -170,6 +176,8 @@ export const useEditorStore = defineStore("editor", () => {
       totalChunks: compareStore.meta?.totalChunks ?? 0,
       // 方案 B：恢复免重算 DMP diff（仅存配套结果；IndexedDB 主体，不入 localStorage/后端）
       userSegments: cacheFresh ? cacheSegs : undefined,
+      // IDML 编辑态样式（§6.6 链路 2：随 baseline 同生命周期；非 IDML 空数组）
+      baselineStyle: buildBaselineStyles(compareStore.segments),
     };
     // 方案 L5/P5：IndexedDB 主体 + localStorage 摘要（异步 fire-and-forget）
     storage.saveEditDraft(draft).catch(() => { /* best-effort */ });
@@ -186,6 +194,7 @@ export const useEditorStore = defineStore("editor", () => {
       file_b_name: draft.fileBName,
       stats: draft.stats,
       total_chunks: draft.totalChunks,
+      baseline_style: draft.baselineStyle,
     }).catch(() => { /* silent fallback — IndexedDB/localStorage still has it */ });
   }
 
@@ -220,6 +229,8 @@ export const useEditorStore = defineStore("editor", () => {
             fileAName: (rd["file_a_name"] as string) ?? compareStore.fileAName,
             fileBName: (rd["file_b_name"] as string) ?? compareStore.fileBName,
             timestamp: remoteTime,
+            // IDML：后端兜底携带编辑态样式（§6.6 链路 2 跨设备恢复）
+            baselineStyle: (rd["baseline_style"] as StyleRange[]) ?? undefined,
           };
         }
       }
@@ -233,6 +244,10 @@ export const useEditorStore = defineStore("editor", () => {
       pendingDraft.value = draft;
       // 方案 B：携带草稿缓存的 userSegments（恢复免重算；undefined=旧草稿回退 worker）
       draftUserSegments.value = draft.userSegments ?? null;
+      // IDML：草稿样式随 baseline 恢复（§6.6 链路 2）；旧草稿回退本地重建
+      baselineStyle.value = draft.baselineStyle && draft.baselineStyle.length > 0
+        ? draft.baselineStyle
+        : buildBaselineStyles(compareStore.segments);
       // Pre-load draft data into editor state
       editSegments.value = cloneSegments(compareStore.segments);
       editText.value = draft.editText;
@@ -247,6 +262,7 @@ export const useEditorStore = defineStore("editor", () => {
     } else {
       // No draft — fresh edit session
       draftUserSegments.value = null;
+      baselineStyle.value = buildBaselineStyles(compareStore.segments);
       editSegments.value = cloneSegments(compareStore.segments);
       // 三期 B 组：初始 doc 与 baseline 同变换（保证一致性）
       editText.value = applyNormalizations(buildDocText(editSegments.value));
@@ -261,6 +277,7 @@ export const useEditorStore = defineStore("editor", () => {
     hasPendingDraft.value = false;
     pendingDraft.value = null;
     draftUserSegments.value = null;
+    baselineStyle.value = buildBaselineStyles(compareStore.segments);
     editSegments.value = cloneSegments(compareStore.segments);
     editText.value = applyNormalizations(buildDocText(editSegments.value));
     originalBaseline.value = applyNormalizations(buildDocText(compareStore.segments));
@@ -307,6 +324,12 @@ export const useEditorStore = defineStore("editor", () => {
     processedCis.value = draft.processedCis ?? [];
     // 方案 B：携带草稿缓存的 userSegments（恢复免重算；undefined=旧草稿回退 worker）
     draftUserSegments.value = draft.userSegments ?? null;
+    // IDML：草稿样式随 baseline 恢复（§6.6 链路 2）
+    baselineStyle.value = draft.baselineStyle && draft.baselineStyle.length > 0
+      ? draft.baselineStyle
+      : buildBaselineStyles(draft.segments && draft.segments.length > 0
+          ? draft.segments
+          : compareStore.segments);
     hasPendingDraft.value = false;
     pendingDraft.value = null;
     isEditing.value = true;
@@ -327,6 +350,7 @@ export const useEditorStore = defineStore("editor", () => {
     processedCis.value = [];
     workerSegments.value = null;
     draftUserSegments.value = null;
+    baselineStyle.value = buildBaselineStyles(compareStore.segments);
     resetToken.value++;
   }
 
@@ -384,7 +408,7 @@ export const useEditorStore = defineStore("editor", () => {
     showInvisibleChars, setShowInvisibleChars,
     fullwidthHalfwidth, setFullwidthHalfwidth,
     cursorPos, scrollPos, lastEditOffset, processedCis,
-    draftKey, hasPendingDraft, pendingDraft,
+    draftKey, hasPendingDraft, pendingDraft, baselineStyle,
     workerSegments, workerVersion, setWorkerResult, draftUserSegments,
     registerFlush, flushEditsSync,
     enterEdit, exitEdit, resetToOriginal, discardDraft, acceptDraft,

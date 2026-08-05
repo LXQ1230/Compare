@@ -271,26 +271,22 @@ def _resolve_whitespace(raw_diffs: list) -> list:
     return out
 
 
-def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
-    """字符级 diff，返回合并后的 segments 和统计信息。"""
-    dmp = diff_match_patch()
-    dmp.Diff_Timeout = 0
-    raw_diffs = dmp.diff_main(orig, modified)
-    dmp.diff_cleanupSemantic(raw_diffs)
-    # 标点归因防线 + 空白归因（佛经句读场景：变更优先归因于标点，空白是排版符）：
-    #   L1 标点移动（del X + 短标点间隔 + add X）→ add 标点 + X + del 标点
-    #   L2 标点包裹（del X + add(P+X+Q)）→ add P + X + add Q
-    #   L3 实词对齐兜底（两侧去标点/空白后实词串相同）→ 强制标点归因
-    #   W  空白归因（del 纯空白 + add 纯标点 → add 标点；孤立 del 纯空白 → 隐藏）
-    raw_diffs = _resolve_punct_transposition(raw_diffs)
-    raw_diffs = _resolve_punct_substring(raw_diffs)
-    raw_diffs = _resolve_punct_alignment(raw_diffs)
-    raw_diffs = _resolve_whitespace(raw_diffs)
-    raw_diffs = _merge_adjacent(raw_diffs)
+def _build_segments(raw_diffs: list) -> tuple[list[dict], dict, list]:
+    """把 raw_diffs 转为 segments + stats，同时记录 A/B 侧游标区间。
 
+    返回 (segments, stats, cursor_info)：
+      cursor_info: list[(seg_index, side, start, end)] — 每个 segment 在
+        原文（'a'）或修改版（'b'）中的字符区间（§5.8 diff 偏移映射用）。
+      游标与样式附着的不变式：diff 序列（经标点归因/空白归因重写后）仍能
+      完整重构出 A/B 两侧原文，故按操作类型累计 a_pos/b_pos 即可得到每个
+      segment 的真实源区间。
+    """
     segments: list[dict] = []
     stats = {"total": 0, "add": 0, "del": 0, "mod": 0}
+    cursor_info: list = []
     change_index = 0
+    a_pos = 0
+    b_pos = 0
     i = 0
 
     while i < len(raw_diffs):
@@ -300,6 +296,11 @@ def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
             segments.append({
                 "text": text, "operation": "none", "origin": "original",
             })
+            cursor_info.append(
+                (len(segments) - 1, "a", a_pos, a_pos + len(text))
+            )
+            a_pos += len(text)
+            b_pos += len(text)
             i += 1
             continue
 
@@ -312,12 +313,20 @@ def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
                     "text": del_text, "operation": "mod", "origin": "original",
                     "side": "old", "ci": change_index,
                 })
+                cursor_info.append(
+                    (len(segments) - 1, "a", a_pos, a_pos + len(del_text))
+                )
                 segments.append({
                     "text": add_text, "operation": "mod", "origin": "original",
                     "side": "new", "ci": change_index,
                 })
+                cursor_info.append(
+                    (len(segments) - 1, "b", b_pos, b_pos + len(add_text))
+                )
                 stats["mod"] += 1
                 stats["total"] += 1
+                a_pos += len(del_text)
+                b_pos += len(add_text)
                 i += 2
                 continue
             else:
@@ -326,8 +335,12 @@ def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
                     "text": text, "operation": "add", "origin": "original",
                     "ci": change_index,
                 })
+                cursor_info.append(
+                    (len(segments) - 1, "b", b_pos, b_pos + len(text))
+                )
                 stats["add"] += 1
                 stats["total"] += 1
+                b_pos += len(text)
                 i += 1
                 continue
 
@@ -340,12 +353,20 @@ def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
                     "text": del_text, "operation": "mod", "origin": "original",
                     "side": "old", "ci": change_index,
                 })
+                cursor_info.append(
+                    (len(segments) - 1, "a", a_pos, a_pos + len(del_text))
+                )
                 segments.append({
                     "text": add_text, "operation": "mod", "origin": "original",
                     "side": "new", "ci": change_index,
                 })
+                cursor_info.append(
+                    (len(segments) - 1, "b", b_pos, b_pos + len(add_text))
+                )
                 stats["mod"] += 1
                 stats["total"] += 1
+                a_pos += len(del_text)
+                b_pos += len(add_text)
                 i += 2
                 continue
             else:
@@ -354,12 +375,117 @@ def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
                     "text": text, "operation": "del", "origin": "original",
                     "ci": change_index,
                 })
+                cursor_info.append(
+                    (len(segments) - 1, "a", a_pos, a_pos + len(text))
+                )
                 stats["del"] += 1
                 stats["total"] += 1
+                a_pos += len(text)
                 i += 1
                 continue
 
+    return segments, stats, cursor_info
+
+
+def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
+    """字符级 diff，返回合并后的 segments 和统计信息。"""
+    return diff_texts_with_style(orig, modified)
+
+
+def diff_texts_with_style(
+    orig: str,
+    modified: str,
+    spans_a: list | None = None,
+    spans_b: list | None = None,
+) -> tuple[list[dict], dict]:
+    """字符级 diff + StyleSpan 附着（§5.8）。
+
+    与 diff_texts 相同语义，额外按 A/B 游标把解析器的 StyleSpan 切分附着到
+    segment（style 可选字段，非 IDML 文件 spans 为 None → 零开销）。
+    侧归属（§6.1）：none 段取 A 侧样式（以原文件为准）；add 段取 B 侧；
+    del/mod-old 取 A 侧；mod-new 取 B 侧。
+    """
+    dmp = diff_match_patch()
+    dmp.Diff_Timeout = 0
+    raw_diffs = dmp.diff_main(orig, modified)
+    dmp.diff_cleanupSemantic(raw_diffs)
+    # 标点归因防线 + 空白归因（同 diff_texts，见其注释）
+    raw_diffs = _resolve_punct_transposition(raw_diffs)
+    raw_diffs = _resolve_punct_substring(raw_diffs)
+    raw_diffs = _resolve_punct_alignment(raw_diffs)
+    raw_diffs = _resolve_whitespace(raw_diffs)
+    raw_diffs = _merge_adjacent(raw_diffs)
+
+    segments, stats, cursor_info = _build_segments(raw_diffs)
+    _attach_spans(segments, cursor_info, spans_a, spans_b)
     return segments, stats
+
+
+def _span_field(sp, name: str, default=None):
+    """读取 span 字段：兼容 StyleSpan 对象与 dict（main.py 传 dict 序列化）。"""
+    return sp[name] if isinstance(sp, dict) else getattr(sp, name)
+
+
+def _slice_spans(spans: list, s: int, e: int, start_idx: int = 0) -> tuple[list, int]:
+    """从排序、互不重叠的 spans 中切出 [s, e) 子区间（转目标区间内偏移）。
+
+    返回 (切出的 dict 列表, 新的扫描起始索引)。spans 覆盖全文；
+    输入兼容 StyleSpan 对象或 dict（to_dict 序列化），输出统一为 dict。
+    指针推进规则：span 完全在区间之前 → 前进；完全在区间内被消费完 → 前进；
+    延伸到区间之外（留给后续 diff 段瓜分）→ 停在当前索引。游标单调保证不回退。
+    """
+    out = []
+    idx = start_idx
+    n = len(spans)
+    while idx < n:
+        sp = spans[idx]
+        sp_end = _span_field(sp, "end")
+        sp_start = _span_field(sp, "start")
+        if sp_end <= s:
+            idx += 1
+            continue
+        if sp_start >= e:
+            break
+        ss = max(sp_start, s)
+        ee = min(sp_end, e)
+        if ee > ss:
+            d = sp if isinstance(sp, dict) else sp.to_dict()
+            out.append({**d, "start": ss - s, "end": ee - s})
+        if sp_end <= e:
+            idx += 1  # 该 span 已被完全消费 → 前进
+        else:
+            break     # 该 span 延伸到区间外，留给后续区间 → 停在当前
+    return out, idx
+
+
+def _attach_spans(
+    segments: list[dict],
+    cursor_info: list,
+    spans_a: list | None,
+    spans_b: list | None,
+) -> None:
+    """按游标区间把 StyleSpan 切分附着到 segments['style']（§5.8）。
+
+    A/B 侧区间随游标单调递增，两侧各维护一个扫描指针，复杂度 O(n + k)。
+    侧归属（§6.1）：none/del/mod-old 取 A 侧，add/mod-new 取 B 侧。
+    """
+    if not cursor_info or (not spans_a and not spans_b):
+        return
+    pa = 0
+    pb = 0
+    for seg_idx, side, start, end in cursor_info:
+        if end <= start:
+            continue
+        if side == "a":
+            if not spans_a:
+                continue
+            sliced, pa = _slice_spans(spans_a, start, end, pa)
+        else:
+            if not spans_b:
+                continue
+            sliced, pb = _slice_spans(spans_b, start, end, pb)
+        if sliced:
+            segments[seg_idx]["style"] = sliced
 
 
 def make_patches(baseline: str, current: str) -> str:

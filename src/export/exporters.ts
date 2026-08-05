@@ -1,17 +1,30 @@
 /**
  * Export diff results to TXT, HTML, and Markdown formats.
+ *
+ * IDML：段落分隔符 U+2029 在 TXT/MD 导出时转为换行（方案 §5.7.1）；
+ * HTML 导出由 renderSegmentsToHTML 转为 <br class="para-break">（§6.5）。
  */
 
-import type { Segment } from '@/types';
-import { renderSegmentsToHTML, segmentsToText } from '@/render/segmentRenderer';
+import type { DocMeta, Segment } from '@/types';
+import { getDocContainerStyle, renderSegmentsToHTML, segmentsToText } from '@/render/segmentRenderer';
 import { embedCss as EMBED_CSS } from '@/styles/exportTheme';
 
+/** IDML 段落分隔符 → 换行（§5.7.1：TXT/MD 导出统一转换）。 */
+const PARA_SEP = '\u2029';
+
 export function exportToTXT(segments: Segment[]): string {
-  return segmentsToText(segments);
+  return segmentsToText(segments).replaceAll(PARA_SEP, '\n');
 }
 
-export function exportToHTML(segments: Segment[], title = 'Compare Report'): string {
-  const body = renderSegmentsToHTML(segments);
+export function exportToHTML(
+  segments: Segment[],
+  title = 'Compare Report',
+  docMeta?: DocMeta | null,
+): string {
+  // IDML：容器套竖排/行高样式（§6.4）；非 IDML docMeta 为空 → 无包裹样式
+  const body = docMeta
+    ? `<div style="${getDocContainerStyle(docMeta)}">${renderSegmentsToHTML(segments, undefined, { vertical: docMeta.vertical === true })}</div>`
+    : renderSegmentsToHTML(segments);
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -37,7 +50,8 @@ export function exportToMD(segments: Segment[]): string {
   const stripHtml = (s: string): string => s.replace(/<[^>]*>/g, '');
   const parts: string[] = [];
   for (const s of segments) {
-    const text = stripHtml(s.text);
+    // IDML：段落分隔符转换行（§5.7.1）
+    const text = stripHtml(s.text).replaceAll(PARA_SEP, '\n');
     if (s.operation === 'add') parts.push(`++${mdEscape(text)}++`);
     else if (s.operation === 'del') parts.push(`~~${mdEscape(text)}~~`);
     else if (s.operation === 'mod') parts.push(`**${mdEscape(text)}**`);

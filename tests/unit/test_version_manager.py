@@ -162,3 +162,58 @@ class TestVersionManager:
         vm = VersionManager(storage_dir=str(tmp_path))
         result = vm.restore("nonexistent")
         assert result is None
+
+
+class TestVersionManagerStyle:
+    """IDML 版本样式链路（方案 §6.6 链路 1：styleA/styleB/docMeta 随版本存储）。"""
+
+    def test_save_restore_styles_and_docmeta(self, tmp_path):
+        vm = VersionManager(storage_dir=str(tmp_path))
+        style_a = [
+            {"start": 0, "end": 4, "font": "FangSong"},
+            {"start": 4, "end": 10, "font": "SourceHanSerifCN", "bold": True},
+        ]
+        style_b = [{"start": 0, "end": 10, "font": "FangSong"}]
+        doc_meta = {"vertical": True, "leadingRatio": 1.536}
+        vid = vm.save("v1", "AAA", "BBB", {"total": 1},
+                      style_a=style_a, style_b=style_b, doc_meta=doc_meta)
+
+        # 文件内存储
+        data = json.loads(
+            (Path(str(tmp_path)) / f"{vid}.json").read_text(encoding="utf-8")
+        )
+        assert data["style_a"] == style_a
+        assert data["style_b"] == style_b
+        assert data["doc_meta"] == doc_meta
+
+        # 恢复回传
+        restored = vm.restore(vid)
+        assert restored["style_a"] == style_a
+        assert restored["style_b"] == style_b
+        assert restored["doc_meta"] == doc_meta
+
+    def test_non_idml_zero_overhead(self, tmp_path):
+        """非 IDML：无 style/docMeta → 空值，不破坏旧格式兼容。"""
+        vm = VersionManager(storage_dir=str(tmp_path))
+        vid = vm.save("plain", "AAA", "BBB", {})
+        restored = vm.restore(vid)
+        assert restored["style_a"] == []
+        assert restored["style_b"] == []
+        assert restored["doc_meta"] == {}
+
+    def test_legacy_format_compat(self, tmp_path):
+        """旧格式（file_a_content 全量字段）读取兼容：缺 style 字段返回空。"""
+        vm = VersionManager(storage_dir=str(tmp_path))
+        vid = vm.save("old", "AAA", "BBB", {})
+        path = Path(str(tmp_path)) / f"{vid}.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        # 模拟旧格式：移除新字段
+        data.pop("style_a", None)
+        data.pop("style_b", None)
+        data.pop("doc_meta", None)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        restored = vm.restore(vid)
+        assert restored["style_a"] == []
+        assert restored["style_b"] == []
+        assert restored["doc_meta"] == {}
+        assert restored["file_a_content"] == "AAA"

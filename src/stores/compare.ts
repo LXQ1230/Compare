@@ -4,7 +4,7 @@
 
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { Segment, CompareMeta, CompareStats, ErrorEnvelope, StreamMessage, ChangeContext, ScaleLevel } from '@/types';
+import type { Segment, CompareMeta, CompareStats, ErrorEnvelope, StreamMessage, ChangeContext, ScaleLevel, StyleRange } from '@/types';
 import { asSegmentId } from '@/types';
 import { api } from '@/utils/api';
 import { storage } from '@/utils/storage';
@@ -116,6 +116,7 @@ export const useCompareStore = defineStore('compare', () => {
               timestamp: Date.now(),
               totalChunks: msg.totalChunks,
               scale: msg.scale,
+              docMeta: msg.docMeta,
             };
             // 方案 P5：meta 到达即生效（stats/scale 立即可用，不等全流程结束）
             meta.value = receivedMeta;
@@ -227,41 +228,81 @@ export const useCompareStore = defineStore('compare', () => {
   /**
    * 由两侧全文重建原始对比 segments（与后端 diff_engine.diff_texts 规则一致）。
    * 恢复版本时在本地重建，免重跑对比。
+   * IDML（styleA/styleB 提供时）：按 A/B 游标把全文偏移样式切分附着到
+   * segment（方案 §6.6 链路 1 回填——侧归属：none/del/mod-old 取 A，add/mod-new 取 B）。
    */
-  function buildSegmentsFromTexts(a: string, b: string): Segment[] {
+  function buildSegmentsFromTexts(a: string, b: string, styleA?: StyleRange[], styleB?: StyleRange[]): Segment[] {
     const raw = diffSafely(a, b);
     const segments: Segment[] = [];
     let ci = 0;
     let i = 0;
+    let aPos = 0;
+    let bPos = 0;
+    const attach = (seg: Segment, side: 'a' | 'b', s: number, e: number) => {
+      if (e <= s) return;
+      const spans = side === 'a' ? styleA : styleB;
+      if (!spans || spans.length === 0) return;
+      const sliced: StyleRange[] = [];
+      for (const sp of spans) {
+        if (sp.end <= s) continue;
+        if (sp.start >= e) break;
+        const ss = Math.max(sp.start, s);
+        const ee = Math.min(sp.end, e);
+        if (ee > ss) sliced.push({ ...sp, start: ss - s, end: ee - s });
+      }
+      if (sliced.length > 0) seg.style = sliced;
+    };
     while (i < raw.length) {
       const [op, text] = raw[i];
       if (op === 0) {
-        segments.push({ text, operation: 'none', origin: 'original' });
+        const seg: Segment = { text, operation: 'none', origin: 'original' };
+        attach(seg, 'a', aPos, aPos + text.length);
+        segments.push(seg);
+        aPos += text.length;
+        bPos += text.length;
         i++;
         continue;
       }
       if (op === 1) {
         if (i + 1 < raw.length && raw[i + 1][0] === -1) {
           ci++;
-          segments.push({ text: raw[i + 1][1], operation: 'mod', origin: 'original', side: 'old', ci });
-          segments.push({ text, operation: 'mod', origin: 'original', side: 'new', ci });
+          const oldSeg: Segment = { text: raw[i + 1][1], operation: 'mod', origin: 'original', side: 'old', ci };
+          attach(oldSeg, 'a', aPos, aPos + raw[i + 1][1].length);
+          segments.push(oldSeg);
+          const newSeg: Segment = { text, operation: 'mod', origin: 'original', side: 'new', ci };
+          attach(newSeg, 'b', bPos, bPos + text.length);
+          segments.push(newSeg);
+          aPos += raw[i + 1][1].length;
+          bPos += text.length;
           i += 2;
           continue;
         }
         ci++;
-        segments.push({ text, operation: 'add', origin: 'original', ci });
+        const seg: Segment = { text, operation: 'add', origin: 'original', ci };
+        attach(seg, 'b', bPos, bPos + text.length);
+        segments.push(seg);
+        bPos += text.length;
         i++;
         continue;
       }
       if (i + 1 < raw.length && raw[i + 1][0] === 1) {
         ci++;
-        segments.push({ text, operation: 'mod', origin: 'original', side: 'old', ci });
-        segments.push({ text: raw[i + 1][1], operation: 'mod', origin: 'original', side: 'new', ci });
+        const oldSeg: Segment = { text, operation: 'mod', origin: 'original', side: 'old', ci };
+        attach(oldSeg, 'a', aPos, aPos + text.length);
+        segments.push(oldSeg);
+        const newSeg: Segment = { text: raw[i + 1][1], operation: 'mod', origin: 'original', side: 'new', ci };
+        attach(newSeg, 'b', bPos, bPos + raw[i + 1][1].length);
+        segments.push(newSeg);
+        aPos += text.length;
+        bPos += raw[i + 1][1].length;
         i += 2;
         continue;
       }
       ci++;
-      segments.push({ text, operation: 'del', origin: 'original', ci });
+      const seg: Segment = { text, operation: 'del', origin: 'original', ci };
+      attach(seg, 'a', aPos, aPos + text.length);
+      segments.push(seg);
+      aPos += text.length;
       i++;
     }
     return segments;
@@ -271,12 +312,20 @@ export const useCompareStore = defineStore('compare', () => {
    * 把该版本的 A/B 全文变成新的对比会话（方案 P1-1c）。
    * 若在编辑模式先退出（自动保存草稿），重建 segments/meta 并持久化，
    * 硬刷新后可恢复。
+   * IDML：styleA/styleB 随版本回填（方案 §6.6 链路 1，排版呈现不退化）。
    */
-  async function restoreVersionSession(aText: string, bText: string, label: string): Promise<void> {
+  async function restoreVersionSession(
+    aText: string,
+    bText: string,
+    label: string,
+    styleA?: StyleRange[],
+    styleB?: StyleRange[],
+    docMeta?: CompareMeta['docMeta'],
+  ): Promise<void> {
     const editorStore = useEditorStore();
     if (editorStore.isEditing) editorStore.exitEdit();
     reset();
-    const segs = buildSegmentsFromTexts(aText, bText);
+    const segs = buildSegmentsFromTexts(aText, bText, styleA, styleB);
     const stats: CompareStats = { total: 0, add: 0, del: 0, mod: 0 };
     for (const s of segs) {
       if (s.operation === 'none') continue;
@@ -293,6 +342,8 @@ export const useCompareStore = defineStore('compare', () => {
       timestamp: Date.now(),
       totalChunks: 1,
       scale: classifyScale(Math.max(aText.length, bText.length)),
+      // IDML：竖排/行高等排版元数据随版本恢复（§6.6 链路 1）
+      docMeta,
     };
     isComplete.value = true;
     error.value = null;

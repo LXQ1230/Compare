@@ -14,7 +14,7 @@ import { mergeSegments } from "../../render/incrementalClassify";
 import { buildBToAMap, detectRestores, type BToAMap } from "../../render/restoreDetector";
 import { classifyInWorker, resetWorkerSession } from "../../utils/classifyWorker";
 import { searchInSegments } from "../../utils/search";
-import type { Segment } from "@/types";
+import type { Segment, StyleRange } from "@/types";
 import { asSegmentId, type SegmentId } from "@/types";
 
 const compareStore = useCompareStore();
@@ -79,6 +79,7 @@ const setDiffDecos = StateEffect.define<DecorationSet>();
 const setUserDecos = StateEffect.define<DecorationSet>();
 const setSearchDecos = StateEffect.define<DecorationSet>();
 const setBookmarkDecos = StateEffect.define<DecorationSet>();
+const setStyleDecos = StateEffect.define<DecorationSet>();
 
 // ── State fields: DecorationSet ─────────────────────────────────
 function makeField(effect: StateEffectType<DecorationSet>) {
@@ -100,6 +101,9 @@ const diffField = makeField(setDiffDecos);
 const userField = makeField(setUserDecos);
 const searchField = makeField(setSearchDecos);
 const bookmarkField = makeField(setBookmarkDecos);
+// IDML 排版样式层（方案 §6.2 第 3 层 Decoration，只读叠加）：
+// font/size/color/bold 行内样式；割注用割注字号小字内联。非 IDML 无 style → 空。
+const styleField = makeField(setStyleDecos);
 
 // ── Helpers ──────────────────────────────────────────────────
 function markClass(s: Segment): string {
@@ -338,6 +342,101 @@ function restoreDiffLayer(): void {
   buildDiffLayerInitial();
 }
 
+// ── IDML 排版样式层（方案 §6.2：第 3 层 Decoration，只读不参与编辑语义）──
+
+/** 编辑态内联样式：字号/字体/粗体/颜色；割注按割注字号小字内联（§6.2）。 */
+function styleDecoCss(sp: StyleRange): string {
+  const parts: string[] = [];
+  if (sp.font) parts.push(`font-family:'${sp.font}',serif`);
+  if (sp.warichu) {
+    parts.push(`font-size:${((sp.sizePt ?? 28) * (sp.warichuSize ?? 40)) / 100}pt`);
+  } else if (sp.sizePt) {
+    parts.push(`font-size:${sp.sizePt}pt`);
+  }
+  if (sp.bold) parts.push('font-weight:700');
+  if (sp.color) parts.push(`color:${sp.color}`);
+  return parts.join(';');
+}
+
+/** 初始样式层——doc 等于 baseline，按段内偏移直接放置（非草稿进入编辑模式）。 */
+function buildStyleDecosInitial(): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  let pos = 0;
+  for (const s of diffSegmentsRef) {
+    const len = s.text.length;
+    if (len === 0) continue;
+    if (isPhantomSegment(s)) continue; // phantom 不占 doc 空间
+    if (s.style && s.style.length > 0) {
+      for (const sp of s.style) {
+        const css = styleDecoCss(sp);
+        if (css && sp.end > sp.start) {
+          // 注意：CM MarkDecoration 不处理 spec.style，须经 attributes 传入（实测）
+          builder.add(pos + sp.start, pos + sp.end,
+            Decoration.mark({ attributes: { style: css } }));
+        }
+      }
+    }
+    pos += len;
+  }
+  return builder.finish();
+}
+
+/**
+ * 编辑后样式层——与 rebuildDiffLayer 同构：把原始段的 style 按
+ * diffSegMap 投影到当前（编辑后）doc 位置。用户新输入（add/mod-new）
+ * 无样式（§6.7 导出时才继承前邻样式）。
+ */
+function buildStyleDecos(userSegs: Segment[]): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  let editedPos = 0;
+  let basePos = 0;
+  let di = 0;
+  for (const s of userSegs) {
+    const len = s.text.length;
+    if (len === 0) continue;
+    if (isPhantomSegment(s)) { basePos += len; continue; }
+    if (s.operation === "none") {
+      const segBaseStart = basePos;
+      const segBaseEnd = basePos + len;
+      const editStart = editedPos;
+      while (di < diffSegMap.length) {
+        const dm = diffSegMap[di];
+        if (dm.baseEnd < segBaseStart) { di++; continue; }
+        if (dm.baseStart > segBaseEnd) break;
+        if (!dm.isPhantom && dm.seg.style && dm.seg.style.length > 0) {
+          const overlapStart = Math.max(dm.baseStart, segBaseStart);
+          const overlapEnd = Math.min(dm.baseEnd, segBaseEnd);
+          if (overlapEnd > overlapStart) {
+            const off = editStart + (overlapStart - segBaseStart);
+            for (const sp of dm.seg.style) {
+              const absStart = dm.baseStart + sp.start;
+              const absEnd = dm.baseStart + sp.end;
+              const s2 = Math.max(absStart, overlapStart);
+              const e2 = Math.min(absEnd, overlapEnd);
+              if (e2 > s2) {
+                const css = styleDecoCss(sp);
+                if (css) {
+                  // 注意：CM MarkDecoration 不处理 spec.style，须经 attributes 传入
+                  builder.add(off + (s2 - overlapStart), off + (e2 - overlapStart),
+                    Decoration.mark({ attributes: { style: css } }));
+                }
+              }
+            }
+          }
+        }
+        if (dm.baseEnd <= segBaseEnd) di++;
+        else break;
+      }
+      editedPos += len;
+      basePos += len;
+      continue;
+    }
+    // add / mod-new: 用户新输入，无样式
+    editedPos += len;
+  }
+  return builder.finish();
+}
+
 /**
  * Build search-match decorations over the CURRENT document.
  * Matches come from searchStore (computed against the EDITED segments —
@@ -389,7 +488,13 @@ function applyClassifyResult(
 
   if (!userResult.dirty) {
     // Rev. A4: fully undone — restore the untouched original diff layer.
-    v.dispatch({ effects: setUserDecos.of(Decoration.none) });
+    v.dispatch({
+      effects: [
+        setUserDecos.of(Decoration.none),
+        // IDML：样式层回到初始（doc 已还原为 baseline）
+        setStyleDecos.of(buildStyleDecosInitial()),
+      ],
+    });
     restoreDiffLayer();
     editorStore.hasEdits = false;
     // 方案 P5：主线程缓存必须与 Worker session.lastSegments 保持一致——
@@ -420,7 +525,11 @@ function applyClassifyResult(
   }
 
   v.dispatch({
-    effects: setUserDecos.of(merged.length > 0 ? buildDecoSet(merged) : Decoration.none),
+    effects: [
+      setUserDecos.of(merged.length > 0 ? buildDecoSet(merged) : Decoration.none),
+      // IDML：style 随编辑后 doc 投影重建（§6.2 第 3 层）
+      setStyleDecos.of(merged.length > 0 ? buildStyleDecos(merged) : buildStyleDecosInitial()),
+    ],
   });
   // Rev. A7: rebuild the diff layer with user-touched doc ranges excluded,
   // so the original colors stay blank underneath user edits.
@@ -470,6 +579,9 @@ function compressHistory(): void {
       setDiffDecos.of(buildDecoSet(diffSegmentsRef)),
       setUserDecos.of(userSegs.length > 0 ? buildDecoSet(userSegs) : Decoration.none),
       setSearchDecos.of(buildSearchDecos(searchStore.matches)),
+      setStyleDecos.of(
+        userSegs.length > 0 ? buildStyleDecos(userSegs) : buildStyleDecosInitial(),
+      ),
     ],
   });
   v.scrollDOM.scrollTop = scroll;
@@ -562,6 +674,7 @@ function ensureEditor() {
       userField,
       searchField,
       bookmarkField,
+      styleField, // IDML 排版样式层（§6.2 第 3 层；非 IDML 恒为空）
       keymap.of([...defaultKeymap, ...historyKeymap]), // rev. A1: undo/redo keybinds
       // CRITICAL: history() extension enables undo — historyKeymap alone is a no-op.
       // 方案 P2-6: 必须显式配置 minDepth——CM6 history 默认 minDepth=100 会把
@@ -624,7 +737,12 @@ function ensureEditor() {
           editorStore.editText = fresh;
           if (fresh === baseline) {
             editorStore.hasEdits = false;
-            v.dispatch({ effects: setUserDecos.of(Decoration.none) });
+            v.dispatch({
+              effects: [
+                setUserDecos.of(Decoration.none),
+                setStyleDecos.of(buildStyleDecosInitial()),
+              ],
+            });
             restoreDiffLayer();
             editorStore.setWorkerResult(++editVersion, []);
             // 方案 P5：缓存已清空 → Worker 增量会话同步重置
@@ -684,7 +802,13 @@ function ensureEditor() {
   });
 
   // Apply diff decorations after mount (no exclusion yet — user hasn't edited)
-  view.dispatch({ effects: setDiffDecos.of(buildDecoSet(diffSegmentsRef)) });
+  view.dispatch({
+    effects: [
+      setDiffDecos.of(buildDecoSet(diffSegmentsRef)),
+      // IDML 排版样式层：doc=baseline，直接按段内偏移放置（§6.2）
+      setStyleDecos.of(buildStyleDecosInitial()),
+    ],
+  });
 
   // If a draft was loaded, apply user decorations + restore cursor/scroll/bookmark
   if (editorStore.hasEdits && editorStore.editText && editorStore.editText !== baseline) {
@@ -694,7 +818,13 @@ function ensureEditor() {
       // 草稿曾因主线程同步 classifyEdit 白屏 5-20s。缓存与 baseline/editText 同源
       // 配套（保存时 workerEditedText === editText 才写入），无错位风险。
       try {
-        view.dispatch({ effects: setUserDecos.of(buildDecoSet(cachedUser)) });
+        view.dispatch({
+          effects: [
+            setUserDecos.of(buildDecoSet(cachedUser)),
+            // IDML：style 随编辑后 doc 投影重建（§6.6 链路 2 恢复）
+            setStyleDecos.of(buildStyleDecos(cachedUser)),
+          ],
+        });
         rebuildDiffLayer(view, cachedUser);
         editorStore.setWorkerResult(++editVersion, cachedUser, editorStore.editText);
       } catch (e) {
@@ -909,7 +1039,12 @@ watch(
     // in this reset (deco clears + doc rewrite) — any one of them would
     // otherwise schedule a save that re-creates an empty draft.
     suppressSave = true;
-    v.dispatch({ effects: setUserDecos.of(Decoration.none) });
+    v.dispatch({
+      effects: [
+        setUserDecos.of(Decoration.none),
+        setStyleDecos.of(buildStyleDecosInitial()),
+      ],
+    });
     restoreDiffLayer();
     v.dispatch({
       changes: { from: 0, to: v.state.doc.length, insert: baseline },

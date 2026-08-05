@@ -2,8 +2,8 @@
 import { useRouter } from 'vue-router';
 import { useVersionStore } from '../../stores/version';
 import { useCompareStore } from '../../stores/compare';
-import { buildDocText, buildOriginalText } from '../../render/editClassifier';
-import type { VersionEntry } from '../../types';
+import { buildDocText, buildOriginalText, buildSideStyles } from '../../render/editClassifier';
+import type { VersionEntry, CompareMeta, StyleRange } from '../../types';
 
 const router = useRouter();
 const versionStore = useVersionStore();
@@ -11,7 +11,8 @@ const compareStore = useCompareStore();
 
 const emit = defineEmits<{ close: [] }>();
 
-/** 保存当前对比会话（A 原文 vs B 修改版全文）为版本（方案 P1-1b）。 */
+/** 保存当前对比会话（A 原文 vs B 修改版全文）为版本（方案 P1-1b）。
+ * IDML：两侧样式随版本存储（方案 §6.6 链路 1，恢复时回填）。 */
 async function onSave() {
   const label = prompt('版本标签（可选）：') ?? '';
   const key = label || `v${new Date().toLocaleString()}`;
@@ -20,6 +21,9 @@ async function onSave() {
     buildOriginalText(compareStore.segments), // A 侧原文
     buildDocText(compareStore.segments),      // B 侧修改版全文（过滤 phantom）
     { ...compareStore.stats },
+    buildSideStyles(compareStore.segments, 'a'), // styleA（§6.6 链路 1）
+    buildSideStyles(compareStore.segments, 'b'), // styleB
+    compareStore.meta?.docMeta as Record<string, unknown> | undefined, // 竖排元数据
   );
   if (saved) {
     // 提示保存成功（后端 id 已入列表，无需刷新）
@@ -27,15 +31,24 @@ async function onSave() {
   }
 }
 
-/** 恢复 = 把该版本的 A/B 全文变成新的对比会话（方案 P1-1c）。 */
+/** 恢复 = 把该版本的 A/B 全文变成新的对比会话（方案 P1-1c），
+ * IDML 版本回滚后排版呈现不退化（§6.6 链路 1：style + docMeta 回填）。 */
 async function onRestore(v: VersionEntry): Promise<void> {
   const res = await versionStore.restoreVersion(v.id);
   if (res) {
     const cmp = useCompareStore();
+    const r = res as {
+      style_a?: StyleRange[];
+      style_b?: StyleRange[];
+      doc_meta?: CompareMeta['docMeta'];
+    };
     await cmp.restoreVersionSession(
       res.file_a_content as string,
       res.file_b_content as string,
       v.label,
+      r.style_a,
+      r.style_b,
+      r.doc_meta,
     );
     router.push(`/report/${cmp.sessionId}`);
     emit('close');

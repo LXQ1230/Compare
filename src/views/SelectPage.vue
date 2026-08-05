@@ -28,8 +28,8 @@ const MAX_BYTES = 15 * 1024 * 1024;
 const sizeWarnings = ref<{ a: string; b: string }>({ a: '', b: '' });
 
 // ── 扩展名校验（rev. 5-14：前端体验层；后端 _validate_upload 二次兜底）──
-const VALID_EXT_RE = /\.(txt|docx|md)$/i;
-const EXT_LABEL = '.txt / .docx / .md';
+const VALID_EXT_RE = /\.(txt|docx|md|idml)$/i;
+const EXT_LABEL = '.txt / .docx / .md / .idml';
 
 function isValidExt(f: File | null): boolean {
   return !!f && VALID_EXT_RE.test(f.name);
@@ -250,8 +250,8 @@ async function startCompare() {
     <DropZone @files="handleFiles" />
 
     <!-- Hidden individual file inputs -->
-    <input ref="inputA" type="file" accept=".txt,.docx,.md" class="hidden-input" @change="handleFileAChange" />
-    <input ref="inputB" type="file" accept=".txt,.docx,.md" class="hidden-input" @change="handleFileBChange" />
+    <input ref="inputA" type="file" accept=".txt,.docx,.md,.idml" class="hidden-input" @change="handleFileAChange" />
+    <input ref="inputB" type="file" accept=".txt,.docx,.md,.idml" class="hidden-input" @change="handleFileBChange" />
 
     <div v-if="fileA || fileB" class="file-cards">
       <div class="file-card" :class="{ filled: fileA }">
@@ -287,7 +287,7 @@ async function startCompare() {
       {{ isStarting ? `对比中… ${compareStore.progress}%（已发现 ${compareStore.stats.total} 处差异）` : '开始对比' }}
     </button>
 
-    <p class="hint">支持格式：txt · docx · md</p>
+    <p class="hint">支持格式：txt · docx · md · idml</p>
 
     <!-- Unfinished edit drafts (rev. edit-persistence/2) -->
     <div v-if="drafts.length > 0" class="draft-list">

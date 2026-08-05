@@ -31,12 +31,15 @@ class AutosaveManager:
         file_a_name: str = "", file_b_name: str = "",
         stats: dict | None = None,
         total_chunks: int = 0,
+        baseline_style: list | None = None,
     ) -> None:
         """Persist an autosave entry keyed by a unique identifier.
 
         方案 L5/P5：去掉 segments 与 baseline（均为可重建冗余——
         baseline 由 buildDocText(segments) 重建，segments 存于 IndexedDB），
         payload 缩至 ~1/10，百万字 autosave 不再序列化全量段。
+        baseline_style：IDML 编辑态样式（方案 §6.6 链路 2，跨设备恢复用；
+        非 IDML 为空列表）。
         """
         entry = {
             "key": key, "text": text, "html": html, "time": timestamp,
@@ -46,6 +49,7 @@ class AutosaveManager:
             "file_a_name": file_a_name, "file_b_name": file_b_name,
             "stats": stats or {},
             "total_chunks": total_chunks,
+            "baseline_style": baseline_style or [],
         }
         path = self._dir / f"{_safe_key(key)}.json"
         # 方案 P3-2: 原子写入——先写同目录 tmp 再 os.replace，避免半截文件
@@ -75,6 +79,7 @@ class AutosaveManager:
             "file_b_name": data.get("file_b_name", ""),
             "stats": data.get("stats", {}),
             "total_chunks": data.get("total_chunks", 0),
+            "baseline_style": data.get("baseline_style", []),
         }
 
     def delete(self, key: str) -> None:

@@ -101,6 +101,10 @@ export const storage = {
       userSegments: Array.isArray(full.userSegments)
         ? full.userSegments.map((s) => ({ ...s }))
         : full.userSegments,
+      // IDML 样式区间（§6.6 链路 2）：同样逐项解构剥离 pinia Proxy
+      baselineStyle: Array.isArray(full.baselineStyle)
+        ? full.baselineStyle.map((sp) => ({ ...sp }))
+        : full.baselineStyle,
     };
     await indexedDB.put('drafts', { key: draft.key, value: plain });
     // 方案 P2-7: 摘要存真实 processedCis（紧凑编码），消除 listEditDrafts

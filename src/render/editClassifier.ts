@@ -6,7 +6,7 @@
  * changed region.
  */
 
-import type { Segment } from '@/types';
+import type { Segment, StyleRange } from '@/types';
 import { diffSafely, normalizeText } from './unicode';
 
 export interface EditResult {
@@ -50,6 +50,53 @@ export function docOffsetsOf(segs: Segment[]): number[] {
     if (!isPhantomSegment(s)) pos += s.text.length;
   }
   return offsets;
+}
+
+/**
+ * 从原始 diff segments 提取「编辑基线」（= B 侧文本）的全文偏移样式区间
+ * （方案 §6.6 链路 2：draft.baselineStyle，随 baseline 同生命周期存储）。
+ * 遍历参与 doc 的段（非 phantom），把段内 style 偏移平移到全文偏移。
+ * 非 IDML（无 style）返回空数组——草稿体积零开销。
+ */
+export function buildBaselineStyles(segs: Segment[]): StyleRange[] {
+  const out: StyleRange[] = [];
+  let pos = 0;
+  for (const s of segs) {
+    if (!isPhantomSegment(s)) {
+      if (s.style && s.style.length > 0) {
+        for (const sp of s.style) {
+          out.push({ ...sp, start: pos + sp.start, end: pos + sp.end });
+        }
+      }
+      pos += s.text.length;
+    }
+  }
+  return out;
+}
+
+/**
+ * 从原始 diff segments 提取指定侧的全文偏移样式区间（方案 §6.6 链路 1：
+ * 版本历史的 styleA/styleB）。A 侧段 = none/del/mod-old（buildOriginalText）；
+ * B 侧段 = none/add/mod-new（buildDocText）。非 IDML 返回空数组。
+ */
+export function buildSideStyles(segs: Segment[], side: 'a' | 'b'): StyleRange[] {
+  const out: StyleRange[] = [];
+  let pos = 0;
+  for (const s of segs) {
+    const takeA = s.operation === 'none' || s.operation === 'del'
+      || (s.operation === 'mod' && s.side === 'old');
+    const takeB = s.operation === 'none' || s.operation === 'add'
+      || (s.operation === 'mod' && s.side === 'new');
+    if (side === 'a' ? takeA : takeB) {
+      if (s.style && s.style.length > 0) {
+        for (const sp of s.style) {
+          out.push({ ...sp, start: pos + sp.start, end: pos + sp.end });
+        }
+      }
+      pos += s.text.length;
+    }
+  }
+  return out;
 }
 
 /**

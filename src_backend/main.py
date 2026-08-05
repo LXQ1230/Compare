@@ -9,9 +9,9 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from src_backend.autosave_manager import AutosaveManager
-from src_backend.diff_engine import diff_texts
+from src_backend.diff_engine import diff_texts, diff_texts_with_style
 from src_backend.errors import AppError, Severity
-from src_backend.parsers import parse_docx, parse_md, parse_txt
+from src_backend.parsers import parse_docx, parse_idml, parse_md, parse_txt
 from src_backend.validators import _get_ext
 from src_backend.version_manager import VersionManager
 
@@ -25,7 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-VALID_EXTENSIONS = frozenset({".txt", ".docx", ".md"})
+VALID_EXTENSIONS = frozenset({".txt", ".docx", ".md", ".idml"})
 # ~500 万汉字（UTF-8 约 3 字节/字）——超大文件上限，超限直接阻止（方案 L0/XL）
 COMPARE_MAX_BYTES = int(os.environ.get("COMPARE_MAX_BYTES", "15000000"))
 
@@ -57,6 +57,7 @@ class AutosaveRequest(BaseModel):
     file_b_name: str = ""
     stats: dict = {}
     total_chunks: int = 0
+    baseline_style: list = []
 
 
 class VersionSaveRequest(BaseModel):
@@ -64,6 +65,9 @@ class VersionSaveRequest(BaseModel):
     file_a_content: str
     file_b_content: str
     stats: dict
+    style_a: list = []
+    style_b: list = []
+    doc_meta: dict = {}
 
 
 # ── Helpers ───────────────────────────────────────────────────────
@@ -108,21 +112,33 @@ def _validate_upload(upload: UploadFile) -> str:
         raise AppError(
             Severity.BLOCKING,
             "不支持的文件格式",
-            f"不支持 {ext} 格式（文件 \"{filename}\"），仅支持 .txt, .docx, .md。",
+            f"不支持 {ext} 格式（文件 \"{filename}\"），仅支持 .txt, .docx, .md, .idml。",
             status_code=400,
         )
     return ext
 
 
-def _parse_file(path: str, ext: str) -> str:
-    """Dispatch to the correct parser based on file extension."""
+def _parse_file(path: str, ext: str) -> tuple[str, list | None, dict | None]:
+    """Dispatch to the correct parser based on file extension.
+
+    Returns (text, spans, doc_meta)：
+      - 非 IDML：spans=None, doc_meta=None（style 可选字段，零开销，方案 §4.2）
+      - IDML：spans=StyleSpan 序列化列表，doc_meta=排版元数据（竖排/行高/缩进）
+    """
     if ext == ".txt":
-        return parse_txt(path)
+        return parse_txt(path), None, None
     if ext == ".docx":
-        return parse_docx(path)
+        return parse_docx(path), None, None
     if ext == ".md":
         with open(path, "r", encoding="utf-8") as fh:
-            return parse_md(fh.read())
+            return parse_md(fh.read()), None, None
+    if ext == ".idml":
+        result = parse_idml(path)
+        return (
+            result.text,
+            [sp.to_dict() for sp in result.spans],
+            result.meta.to_dict(),
+        )
     raise AppError(
         Severity.BLOCKING,
         "不支持的文件格式",
@@ -148,38 +164,54 @@ def _iter_chunk_ranges(segments: list[dict], max_chars: int = 64 * 1024):
         yield start, len(segments)
 
 
-def _build_ndjson(segments: list[dict], stats: dict, scale: str):
+def _ndjson_line(obj: dict) -> str:
+    """序列化一条 NDJSON 行。
+
+    U+2029（段落分隔符）/U+2028（行分隔符）是 IDML 段落边界（方案 §5.7.1），
+    但部分按行拆分逻辑（str.splitlines）会将其误判为行边界切断 JSON。
+    统一转义为 \\u 序列（json.loads 自动还原），保证 NDJSON 行完整性。
+    """
+    s = json.dumps(obj, ensure_ascii=False)
+    s = s.replace("\u2029", "\\u2029").replace("\u2028", "\\u2028")
+    return s + "\n"
+
+
+def _build_ndjson(segments: list[dict], stats: dict, scale: str, doc_meta: dict | None = None):
     """Yield NDJSON lines for the streaming compare response."""
-    yield json.dumps({
+    yield _ndjson_line({
         "type": "phase",
         "stage": "parsing",
         "detail": "Analyzing files...",
         "progress": 10,
-    }, ensure_ascii=False) + "\n"
+    })
 
-    yield json.dumps({
+    yield _ndjson_line({
         "type": "phase",
         "stage": "diffing",
         "detail": "Computing differences...",
         "progress": 50,
-    }, ensure_ascii=False) + "\n"
+    })
 
     ranges = list(_iter_chunk_ranges(segments))
-    yield json.dumps({
+    meta_payload: dict = {
         "type": "meta",
         "stats": stats,
         "totalChunks": len(ranges),
         "scale": scale,
-    }) + "\n"
+    }
+    if doc_meta:
+        # IDML 排版元数据（竖排/行高/缩进/字体告警）随 meta 行传输（方案 §5.3）
+        meta_payload["docMeta"] = doc_meta
+    yield _ndjson_line(meta_payload)
 
     for idx, (s, e) in enumerate(ranges):
-        yield json.dumps({
+        yield _ndjson_line({
             "type": "segments",
             "index": idx,
             "data": segments[s:e],
-        }, ensure_ascii=False) + "\n"
+        })
 
-    yield json.dumps({"type": "done"}) + "\n"
+    yield _ndjson_line({"type": "done"})
 
 
 @app.exception_handler(AppError)
@@ -214,8 +246,8 @@ async def compare(
         tmp_a.flush()
         tmp_b.flush()
 
-        text_a = _parse_file(tmp_a.name, ext_a)
-        text_b = _parse_file(tmp_b.name, ext_b)
+        text_a, spans_a, meta_a = _parse_file(tmp_a.name, ext_a)
+        text_b, spans_b, meta_b = _parse_file(tmp_b.name, ext_b)
     finally:
         tmp_a.close()
         tmp_b.close()
@@ -225,10 +257,15 @@ async def compare(
             except OSError:
                 pass
 
-    segments, stats = diff_texts(text_a, text_b)
+    # IDML：diff 时按 A/B 游标附着 StyleSpan（§5.8）；非 IDML 零开销
+    if spans_a is not None or spans_b is not None:
+        segments, stats = diff_texts_with_style(text_a, text_b, spans_a, spans_b)
+    else:
+        segments, stats = diff_texts(text_a, text_b)
     scale = _classify_scale(max(len(text_a), len(text_b)))
+    doc_meta = meta_a or meta_b
     return StreamingResponse(
-        _build_ndjson(segments, stats, scale),
+        _build_ndjson(segments, stats, scale, doc_meta),
         media_type="application/x-ndjson",
     )
 
@@ -257,6 +294,7 @@ async def autosave(req: AutosaveRequest):
             processed_cis=req.processed_cis,
             file_a_name=req.file_a_name, file_b_name=req.file_b_name,
             stats=req.stats, total_chunks=req.total_chunks,
+            baseline_style=req.baseline_style,
         )
         return {"status": "ok"}
 
@@ -282,7 +320,10 @@ async def autosave(req: AutosaveRequest):
 async def version_save(req: VersionSaveRequest):
     """Save a named version of the current compare session."""
     vm = VersionManager(storage_dir=_get_versions_dir())
-    vid = vm.save(req.label, req.file_a_content, req.file_b_content, req.stats)
+    vid = vm.save(
+        req.label, req.file_a_content, req.file_b_content, req.stats,
+        style_a=req.style_a, style_b=req.style_b, doc_meta=req.doc_meta,
+    )
     return {"status": "ok", "id": vid}
 
 

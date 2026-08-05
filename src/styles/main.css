@@ -94,6 +94,38 @@ html, body {
   outline: 1px solid var(--color-focus-border);
 }
 
+/* ── IDML 排版级呈现（方案 §6.3/§6.5）─────────────────────── */
+/* 段落分隔（U+2029 → br.para-break）：竖排=另起一列 / 横排=换行 */
+.para-break {
+  display: block;
+}
+
+/* Warichu 割注双排小字 */
+.warichu {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: flex-start;
+  vertical-align: -0.3em;
+}
+.warichu-pair {
+  display: inline-flex;
+  flex-direction: row;
+}
+.warichu-col {
+  writing-mode: vertical-rl;
+  line-height: 1;
+}
+/* 横排文档：列转横向行，组上下叠放（§6.3） */
+.warichu-horizontal .warichu-pair {
+  flex-direction: column;
+  align-items: center;
+}
+.warichu-horizontal .warichu-col {
+  writing-mode: horizontal-tb;
+  display: block;
+  line-height: 1.2;
+}
+
 /* ── Change-item flash when scrolled into view ───────────── */
 .ci-flash {
   animation: ci-flash-anim 0.6s ease-out 2;
