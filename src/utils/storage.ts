@@ -95,12 +95,15 @@ export const storage = {
       processedCis: Array.isArray(full.processedCis) ? [...full.processedCis] : full.processedCis,
     };
     await indexedDB.put('drafts', { key: draft.key, value: plain });
+    // 方案 P2-7: 摘要存真实 processedCis（紧凑编码），消除 listEditDrafts
+    // 的 [1..count] 近似——用户实际处理的 ci 与进度显示一致。
     const summary = {
       key: draft.key,
       fileAName: draft.fileAName,
       fileBName: draft.fileBName,
       timestamp: draft.timestamp,
       processedCount: draft.processedCis.length,
+      processedCisStr: Array.isArray(draft.processedCis) ? draft.processedCis.join(',') : '',
       hasEdits: draft.hasEdits,
     };
     try {
@@ -121,10 +124,13 @@ export const storage = {
     } as EditSessionDraft;
   },
 
-  /** 删除草稿：IndexedDB 主体 + localStorage 摘要。 */
+  /**
+   * 删除草稿：先清 localStorage 摘要（索引），再删 IndexedDB 主体（方案 P2-7）。
+   * 摘要缺失 → 首页不再展示；IDB 残留由同 key 下次保存覆盖兜底（主体不构成 UI 污染）。
+   */
   async clearEditDraft(key: string): Promise<void> {
-    await indexedDB.delete('drafts', key);
     localStorage.removeItem(EDIT_DRAFT_PREFIX + key);
+    await indexedDB.delete('drafts', key).catch(() => { /* 主体残留可覆盖 */ });
   },
 
   /** 首页草稿列表：从 localStorage 索引摘要读取（无 editText 正文）。 */
@@ -137,13 +143,18 @@ export const storage = {
           const summary = JSON.parse(localStorage.getItem(k)!) as {
             key: string; fileAName: string; fileBName: string;
             timestamp: number; processedCount: number; hasEdits: boolean;
+            processedCisStr?: string;
           };
+          // 方案 P2-7: 优先用真实 processedCis（紧凑编码），旧摘要（无 str 字段）回退近似
+          const processedCis = summary.processedCisStr
+            ? summary.processedCisStr.split(',').filter(Boolean).map(Number)
+            : new Array(summary.processedCount).fill(0).map((_, i) => i + 1);
           drafts.push({
             key: summary.key,
             fileAName: summary.fileAName,
             fileBName: summary.fileBName,
             timestamp: summary.timestamp,
-            processedCis: new Array(summary.processedCount).fill(0).map((_, i) => i + 1),
+            processedCis,
             hasEdits: summary.hasEdits,
             editText: '',
             baseline: '',

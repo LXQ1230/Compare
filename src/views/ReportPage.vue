@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useCompareStore } from '../stores/compare';
 import { useViewStore } from '../stores/view';
@@ -73,13 +73,10 @@ onMounted(async () => {
 });
 
 /**
- * 方案 P2：大文档（scale M/L）查看态由只读 CodeMirror 承接（虚拟行渲染），
- * v-html 视图仅用于小文档（scale S）。
+ * 方案 P2-3：大文档（scale M/L）查看态由只读 CodeMirror 承接（虚拟行渲染），
+ * v-html 视图仅用于小文档（scale S）。统一引用 compareStore.isLargeDoc。
+ * 注意：不做本地 const 赋值（setup 解包后失去响应性），模板/script 直接访问 store。
  */
-const isLargeDoc = computed(() => {
-  const s = compareStore.meta?.scale;
-  return s === 'M' || s === 'L';
-});
 
 useKeyboardShortcuts({
   onSearchToggle: () => searchStore.toggle(),
@@ -123,7 +120,9 @@ function scrollToContext(ctx: { index: SegmentId }): void {
   const host = document.querySelector('.report-main') as
     | (HTMLElement & { __cmScrollToCi?: (ci: SegmentId) => void })
     | null;
-  if ((editorStore.isEditing || isLargeDoc.value) && host?.__cmScrollToCi) {
+  // 方案 P2-3: 统一引用 compareStore.isLargeDoc（store getter 响应式，
+  // 模板与 script 直接访问自动解包为 boolean）
+  if ((editorStore.isEditing || compareStore.isLargeDoc) && host?.__cmScrollToCi) {
     host.__cmScrollToCi(ctx.index);
     return;
   }
@@ -140,7 +139,7 @@ versionStore.loadVersions();
 
 <template>
   <div class="report-page">
-    <Toolbar @export="isExportDialogVisible = true" />
+    <Toolbar @export="isExportDialogVisible = true" @versions="showVersions = true" />
     <ProgressHeader />
     <SearchBar />
     <ErrorDisplay :error="compareStore.error" @dismiss="compareStore.error = null" />
@@ -149,8 +148,8 @@ versionStore.loadVersions();
       <main class="report-main">
         <CodeMirrorDiff />
         <!-- 方案 P2: 大文档查看态由 CodeMirrorDiff 内的只读 CM 承接 -->
-        <UnifiedView v-if="viewStore.viewMode === 'unified' && !editorStore.isEditing && !isLargeDoc" />
-        <SplitView v-else-if="!editorStore.isEditing && !isLargeDoc" />
+        <UnifiedView v-if="viewStore.viewMode === 'unified' && !editorStore.isEditing && !compareStore.isLargeDoc" />
+        <SplitView v-else-if="!editorStore.isEditing && !compareStore.isLargeDoc" />
       </main>
     </div>
     <ExportDialog v-if="isExportDialogVisible" @close="isExportDialogVisible = false" />

@@ -127,10 +127,11 @@ export const useEditorStore = defineStore("editor", () => {
 
   function saveDraft(): void {
     if (!isEditing.value || !draftKey.value) return;
-    // Rev. 8-4: skip persisting a no-op draft (content back at baseline with
-    // no edits) — this stops a programmatic reset (discardDraft/resetToOriginal)
-    // or undo-to-baseline from re-creating an empty draft in storage.
-    if (!hasEdits.value && editText.value === originalBaseline.value) return;
+    // Rev. 8-4 + 方案 P3-8: skip persisting a no-op draft (content back at
+    // baseline with no edits, or emptied) — this stops a programmatic reset
+    // (discardDraft/resetToOriginal) or undo-to-baseline from re-creating an
+    // empty draft in storage.
+    if (!hasEdits.value && (editText.value === originalBaseline.value || editText.value === '')) return;
     const draft: EditSessionDraft = {
       key: draftKey.value,
       editText: editText.value,

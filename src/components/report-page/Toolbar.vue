@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { useCompareStore } from '../../stores/compare';
 import { useViewStore } from '../../stores/view';
 import { useEditorStore } from '../../stores/editor';
@@ -11,13 +10,10 @@ const editorStore = useEditorStore();
 const searchStore = useSearchStore();
 
 /**
- * 方案 P2：大文档（scale M/L）查看态由只读 CM 承接（Unified 语义），
- * split 分栏仅小文档可用。
+ * 方案 P2-3：大文档（scale M/L）查看态由只读 CM 承接（Unified 语义），
+ * split 分栏仅小文档可用。模板中直接访问 compareStore.isLargeDoc
+ * （setup 中 const 赋值会丢失响应性，故不在此缓存）。
  */
-const isLargeDoc = computed(() => {
-  const s = compareStore.meta?.scale;
-  return s === 'M' || s === 'L';
-});
 
 async function handleEditToggle(): Promise<void> {
   if (editorStore.isEditing) {
@@ -34,7 +30,7 @@ function jumpToLastEdit(): void {
   host?.__cmScrollToLastEdit?.();
 }
 
-defineEmits<{ export: [] }>();
+defineEmits<{ export: []; versions: [] }>();
 </script>
 
 <template>
@@ -54,9 +50,9 @@ defineEmits<{ export: [] }>();
     <div class="toolbar-right">
       <button class="tb-btn" @click="searchStore.toggle()" title="搜索 (Ctrl+F)">🔍 搜索</button>
       <button
-        class="tb-btn" :disabled="isLargeDoc && !editorStore.isEditing"
+        class="tb-btn" :disabled="compareStore.isLargeDoc && !editorStore.isEditing"
         @click="viewStore.toggleView()"
-        :title="isLargeDoc && !editorStore.isEditing ? '大文档仅支持统一视图' : '切换视图'"
+        :title="compareStore.isLargeDoc && !editorStore.isEditing ? '大文档仅支持统一视图' : '切换视图'"
       >
         {{ viewStore.viewMode === 'unified' ? '⇶ 分栏' : '≡ 统一' }}
       </button>
@@ -78,6 +74,7 @@ defineEmits<{ export: [] }>();
         title="编辑模式 (Ctrl+E)"
       >✏️ {{ editorStore.isEditing ? '退出编辑' : '编辑' }}</button>
       <button class="tb-btn" @click="$emit('export')" title="导出">📥 导出</button>
+      <button class="tb-btn" @click="$emit('versions')" title="版本历史">📚 版本</button>
     </div>
   </div>
 </template>

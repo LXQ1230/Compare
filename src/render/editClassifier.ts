@@ -27,6 +27,32 @@ export function buildDocText(segs: Segment[]): string {
 }
 
 /**
+ * 从原始 diff segments 重建原版 A 文本（A = none + del + mod-old 按序拼接）。
+ * 与 restoreDetector.ts 原实现同逻辑，统一在此导出（方案 P1-1b）。
+ */
+export function buildOriginalText(segs: Segment[]): string {
+  return segs
+    .filter((s) => s.operation === 'none' || s.operation === 'del' || (s.operation === 'mod' && s.side === 'old'))
+    .map((s) => s.text)
+    .join('');
+}
+
+/**
+ * 计算每个 segment 在编辑文档（doc）中的起始偏移（方案 P2-2/P2-4）。
+ * phantom 段（del/mod-old）不占 doc 空间——与 buildSearchDecos 的累计逻辑
+ * 完全一致，是搜索高亮与跳转共用的唯一偏移基准。
+ */
+export function docOffsetsOf(segs: Segment[]): number[] {
+  const offsets: number[] = [];
+  let pos = 0;
+  for (const s of segs) {
+    offsets.push(pos);
+    if (!isPhantomSegment(s)) pos += s.text.length;
+  }
+  return offsets;
+}
+
+/**
  * 兼容导出：完整规范化（BOM + LF + NFC）——三期 B 组（4-5）统一走 unicode.ts。
  * 语义较旧 normalizeLineEndings 更全，供初始化路径（enterEdit/ensureEditor）使用。
  */

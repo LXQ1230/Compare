@@ -4,11 +4,15 @@
 
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { Segment, CompareMeta, CompareStats, ErrorEnvelope, StreamMessage, ChangeContext } from '@/types';
+import type { Segment, CompareMeta, CompareStats, ErrorEnvelope, StreamMessage, ChangeContext, ScaleLevel } from '@/types';
 import { asSegmentId } from '@/types';
 import { api } from '@/utils/api';
 import { storage } from '@/utils/storage';
 import { fnv1aHash } from '@/utils/hash';
+import { diffSafely } from '@/render/unicode';
+// 循环 import 安全：editor.ts 顶层 import compare.ts，两 store 均仅在
+// setup 函数体内互调 useXxxStore()，模块初始化阶段无解引用。
+import { useEditorStore } from './editor';
 
 export const useCompareStore = defineStore('compare', () => {
   const segments = ref<Segment[]>([]);
@@ -27,6 +31,15 @@ export const useCompareStore = defineStore('compare', () => {
   const stats = computed<CompareStats>(() => meta.value?.stats ?? { total: 0, add: 0, del: 0, mod: 0 });
   const fileAName = computed(() => meta.value?.fileA ?? '');
   const fileBName = computed(() => meta.value?.fileB ?? '');
+
+  /**
+   * 方案 P2-3：大文档（scale M/L）共用 getter——Sidebar / ReportPage / Toolbar
+   * 统一引用，消除三处重复 computed 的逻辑漂移。
+   */
+  const isLargeDoc = computed(() => {
+    const s = meta.value?.scale;
+    return s === 'M' || s === 'L';
+  });
 
   function reset(): void {
     segments.value = [];
@@ -195,6 +208,100 @@ export const useCompareStore = defineStore('compare', () => {
     // Rev. 5-3: derive the session id from the same triple so the resumed
     // URL (/report/:sessionId) matches what SelectPage pushes.
     sessionId.value = computeSessionId(draft.fileAName, draft.fileBName, draft.timestamp);
+    // 方案 P2-1: 与 startCompare 保持一致——硬刷新后才能用 meta 重算 sessionId，
+    // 否则恢复的草稿会话刷新后被踢回首页。
+    storage.saveMeta(meta.value);
+    buildContexts();
+  }
+
+  // ── 版本恢复（方案 P1-1c）──────────────────────────────────────
+
+  /** 按真实字符数分级（mirror 后端 main.py _classify_scale）。 */
+  function classifyScale(chars: number): ScaleLevel {
+    if (chars <= 100_000) return 'S';
+    if (chars <= 500_000) return 'M';
+    if (chars <= 5_000_000) return 'L';
+    return 'XL';
+  }
+
+  /**
+   * 由两侧全文重建原始对比 segments（与后端 diff_engine.diff_texts 规则一致）。
+   * 恢复版本时在本地重建，免重跑对比。
+   */
+  function buildSegmentsFromTexts(a: string, b: string): Segment[] {
+    const raw = diffSafely(a, b);
+    const segments: Segment[] = [];
+    let ci = 0;
+    let i = 0;
+    while (i < raw.length) {
+      const [op, text] = raw[i];
+      if (op === 0) {
+        segments.push({ text, operation: 'none', origin: 'original' });
+        i++;
+        continue;
+      }
+      if (op === 1) {
+        if (i + 1 < raw.length && raw[i + 1][0] === -1) {
+          ci++;
+          segments.push({ text: raw[i + 1][1], operation: 'mod', origin: 'original', side: 'old', ci });
+          segments.push({ text, operation: 'mod', origin: 'original', side: 'new', ci });
+          i += 2;
+          continue;
+        }
+        ci++;
+        segments.push({ text, operation: 'add', origin: 'original', ci });
+        i++;
+        continue;
+      }
+      if (i + 1 < raw.length && raw[i + 1][0] === 1) {
+        ci++;
+        segments.push({ text, operation: 'mod', origin: 'original', side: 'old', ci });
+        segments.push({ text: raw[i + 1][1], operation: 'mod', origin: 'original', side: 'new', ci });
+        i += 2;
+        continue;
+      }
+      ci++;
+      segments.push({ text, operation: 'del', origin: 'original', ci });
+      i++;
+    }
+    return segments;
+  }
+
+  /**
+   * 把该版本的 A/B 全文变成新的对比会话（方案 P1-1c）。
+   * 若在编辑模式先退出（自动保存草稿），重建 segments/meta 并持久化，
+   * 硬刷新后可恢复。
+   */
+  async function restoreVersionSession(aText: string, bText: string, label: string): Promise<void> {
+    const editorStore = useEditorStore();
+    if (editorStore.isEditing) editorStore.exitEdit();
+    reset();
+    const segs = buildSegmentsFromTexts(aText, bText);
+    const stats: CompareStats = { total: 0, add: 0, del: 0, mod: 0 };
+    for (const s of segs) {
+      if (s.operation === 'none') continue;
+      // mod 对由 old 侧计一次（与后端 diff_texts stats 语义一致，mod-new 不重复计）
+      if (s.operation === 'mod' && s.side === 'new') continue;
+      stats.total++;
+      stats[s.operation]++;
+    }
+    segments.value = segs;
+    meta.value = {
+      fileA: `${label} · A`,
+      fileB: `${label} · B`,
+      stats,
+      timestamp: Date.now(),
+      totalChunks: 1,
+      scale: classifyScale(Math.max(aText.length, bText.length)),
+    };
+    isComplete.value = true;
+    error.value = null;
+    sessionId.value = computeSessionId(meta.value.fileA, meta.value.fileB, meta.value.timestamp);
+    // 关键：与 P2-1 一致，硬刷新可恢复
+    storage.saveMeta(meta.value);
+    void storage.clearSegments().then(() => storage.saveSegments(
+      segs.length ? [{ id: 'seg-0', index: 0, data: segs }] : [],
+    )).catch(() => {});
     buildContexts();
   }
 
@@ -254,7 +361,8 @@ export const useCompareStore = defineStore('compare', () => {
   return {
     segments, contexts, meta, error,
     isComparing, isComplete, currentPhase, progress,
-    stats, fileAName, fileBName, sessionId,
+    stats, fileAName, fileBName, sessionId, isLargeDoc,
     reset, startCompare, buildContexts, restoreFromDraft,
+    restoreVersionSession, buildSegmentsFromTexts,
   };
 });

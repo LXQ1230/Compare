@@ -7,6 +7,10 @@
  *
  * 32-bit FNV-1a; collisions are acceptable for these identity purposes
  * (same input ⇒ same key; different inputs only *rarely* collide).
+ *
+ * 方案 P3-4: 维持 32 位不升 64 位——① draftKey 已混入 baseline 全文哈希，
+ * 非恶意场景碰撞概率可忽略；② 升 64 位会改变 key 值，导致所有存量草稿
+ * 变孤儿（需迁移逻辑，成本 > 收益）。
  */
 
 export function fnv1aHash(str: string): string {

@@ -49,7 +49,11 @@ function ensureWorker(): Worker | null {
       workerBroken = true;
       worker?.terminate();
       worker = null;
+      // 方案 P3-7: 通知调用方走主线程降级——此前静默丢失一次 pending 结果，
+      // 用户最后一次编辑的装饰层会一直缺失直到下一次编辑触发。
+      const cb = pendingCb;
       pendingCb = null;
+      cb?.(null);
     };
   } catch {
     workerBroken = true;

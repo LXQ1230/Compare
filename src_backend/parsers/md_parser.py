@@ -43,8 +43,8 @@ def parse_md(text: str) -> str:
     # 无序列表
     text = re.sub(r"^[\s]*[-*+]\s+", "", text, flags=re.MULTILINE)
 
-    # 有序列表
-    text = re.sub(r"^[\s]*\d+\.\s+", "", text, flags=re.MULTILINE)
+    # 有序列表（方案 P3-3: [\s]→[ \t]，不再吞换行——避免 `\s` 匹配到 \n 跨行删除）
+    text = re.sub(r"^[ \t]*\d+\.\s+", "", text, flags=re.MULTILINE)
 
     # 表格分隔行
     text = re.sub(r"^\|?[\s]*[-:| ]{3,}[\s]*\|?\s*$", "", text, flags=re.MULTILINE)

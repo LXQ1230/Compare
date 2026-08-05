@@ -53,7 +53,42 @@ function refreshSizeWarnings(): void {
 
 // Load resume-able drafts from localStorage index summaries (rev. edit-persistence/2 + 方案 L5/P4)
 function loadDrafts(): void {
-  drafts.value = storage.listEditDrafts().filter((d) => d.hasEdits);
+  const list = storage.listEditDrafts().filter((d) => d.hasEdits);
+  drafts.value = list;
+  // 方案 P2-7: 异步清理坏摘要（摘要存在但 IDB+后端均无正文）——不阻塞列表展示
+  void pruneBadDrafts(list);
+}
+
+/**
+ * 清理"孤儿摘要"（方案 P2-7）: localStorage 摘要仍在，但 IndexedDB 主体与
+ * 后端 autosave 都无正文——点进去必然失败，直接清掉避免误导用户。
+ */
+async function pruneBadDrafts(list: EditSessionDraft[]): Promise<void> {
+  let changed = false;
+  for (const d of list) {
+    let full: EditSessionDraft | null = null;
+    try {
+      full = await storage.loadEditDraft(d.key);
+    } catch {
+      /* ignore */
+    }
+    if (full?.editText) continue;
+    let remoteOk = false;
+    try {
+      const remote = await api.autosave({ action: 'load', key: d.key });
+      const rd = (remote?.data ?? {}) as Record<string, unknown>;
+      remoteOk = !!rd['text'];
+    } catch {
+      /* ignore */
+    }
+    if (!remoteOk) {
+      await storage.clearEditDraft(d.key).catch(() => {});
+      changed = true;
+    }
+  }
+  if (changed) {
+    drafts.value = storage.listEditDrafts().filter((x) => x.hasEdits);
+  }
 }
 onMounted(loadDrafts);
 
@@ -109,7 +144,8 @@ async function resumeDraft(draft: EditSessionDraft): Promise<void> {
       }
     }
     if (!full || !full.editText) {
-      error.value = '无法恢复该草稿（正文缺失），请重新上传文件对比';
+      // 方案 P2-7: 摘要存在但正文全丢（IDB+后端都无）→ 提示过期而非"缺失"
+      error.value = '草稿数据已过期，请重新上传文件对比';
       return;
     }
     if (segs.length === 0) {

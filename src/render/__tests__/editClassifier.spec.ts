@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings } from '@/render/editClassifier';
+import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings, docOffsetsOf } from '@/render/editClassifier';
 import { renderSegmentsToHTML } from '@/render/segmentRenderer';
 import type { Segment } from '@/types';
 
@@ -136,8 +136,7 @@ describe('classifyEdit', () => {
   });
 });
 
-describe('segmentRenderer esc (rev. F1)', () => {
-  it('escapes single quotes', () => {
+describe('segmentRenderer esc (rev. F1)', () => {  it('escapes single quotes', () => {
     expect(renderSegmentsToHTML([seg("it's", 'none')])).toContain('&#39;');
   });
 
@@ -155,5 +154,49 @@ describe('segmentRenderer esc (rev. F1)', () => {
 
   it('keeps newlines intact for pre-wrap rendering', () => {
     expect(renderSegmentsToHTML([seg('line1\nline2', 'none')])).toContain('line1\nline2');
+  });
+});
+
+describe('docOffsetsOf (方案 P2-2/P2-4: 编辑态跳转共用偏移基准)', () => {
+  it('phantom 段（del/mod-old）不占 doc 空间', () => {
+    const segs: Segment[] = [
+      seg('abc', 'none'),
+      seg('X', 'del', undefined, 1),
+      seg('def', 'none'),
+      seg('old', 'mod', 'old', 2),
+      seg('new', 'mod', 'new', 2),
+      seg('ghi', 'none'),
+    ];
+    // del 与 mod-old 都是 phantom：偏移跳过其文本长度
+    expect(docOffsetsOf(segs)).toEqual([0, 3, 3, 6, 6, 9]);
+  });
+
+  it('add 段正常占位（新插入文本在 doc 中真实存在）', () => {
+    const segs: Segment[] = [
+      seg('abc', 'none'),
+      seg('insert', 'add', undefined, 1),
+      seg('def', 'none'),
+    ];
+    expect(docOffsetsOf(segs)).toEqual([0, 3, 9]);
+  });
+
+  it('与 buildSearchDecos 累计逻辑一致（buildDocText 重建验证）', () => {
+    // 任一段序列：docOffsetsOf 最后一个偏移 + 末段长度 = buildDocText 长度
+    const segs: Segment[] = [
+      seg('甲', 'none'),
+      seg('乙', 'del', undefined, 1),
+      seg('丙', 'mod', 'old', 2),
+      seg('丁', 'mod', 'new', 2),
+      seg('戊', 'add', undefined, 3),
+      seg('己', 'none'),
+    ];
+    const offsets = docOffsetsOf(segs);
+    const doc = buildDocText(segs);
+    const last = segs[segs.length - 1];
+    expect(offsets[segs.length - 1] + last.text.length).toBe(doc.length);
+    // 单调不减且互不重叠
+    for (let i = 1; i < offsets.length; i++) {
+      expect(offsets[i]).toBeGreaterThanOrEqual(offsets[i - 1]);
+    }
   });
 });

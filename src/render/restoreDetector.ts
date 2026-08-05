@@ -22,13 +22,11 @@
 
 import type { Segment } from '@/types';
 
-/** 从原始 diff segments 重建原版 A 文本（A = none + del + mod-old）。 */
-export function buildOriginalText(segs: Segment[]): string {
-  return segs
-    .filter((s) => s.operation === 'none' || s.operation === 'del' || (s.operation === 'mod' && s.side === 'old'))
-    .map((s) => s.text)
-    .join('');
-}
+/**
+ * 从原始 diff segments 重建原版 A 文本（A = none + del + mod-old）。
+ * 统一实现移至 editClassifier.ts（方案 P1-1b），此处 re-export 保持引用兼容。
+ */
+export { buildOriginalText } from './editClassifier';
 
 export interface RestoreSpan {
   bStart: number;

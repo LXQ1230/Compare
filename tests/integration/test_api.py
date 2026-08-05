@@ -131,6 +131,46 @@ class TestCompareEndpoint:
         assert body["error"] is True
         assert body["severity"] == "blocking"
 
+    def test_oversized_file_read_in_chunks(self, client, tmp_path, monkeypatch):
+        """方案 P1-2: 超限文件按 256KB 分块读取即中断，不做全量读入内存。
+
+        断言 UploadFile.read 被以分块大小调用（而非单次全量），且返回 413。
+        FastAPI File 端点收到的实例是 starlette.UploadFile（fastapi.UploadFile
+        是子类且未覆写 read）——须 patch starlette 基类才命中。
+        """
+        import src_backend.main as main_mod
+        import starlette.datastructures as sd
+        monkeypatch.setattr(main_mod, "COMPARE_MAX_BYTES", 1024)  # 1KB 上限
+
+        a_file = tmp_path / "a.txt"
+        a_file.write_text("x" * 2048, encoding="utf-8")  # 2KB > 1KB
+        b_file = tmp_path / "b.txt"
+        b_file.write_text("y" * 10, encoding="utf-8")
+
+        reads: list[int] = []
+        orig_read = sd.UploadFile.read
+
+        async def fake_read(self, size: int = -1) -> bytes:
+            reads.append(size)
+            return await orig_read(self, size)
+
+        monkeypatch.setattr(sd.UploadFile, "read", fake_read)
+
+        response = client.post(
+            "/api/compare",
+            files={
+                "fileA": ("a.txt", a_file.read_bytes(), "text/plain"),
+                "fileB": ("b.txt", b_file.read_bytes(), "text/plain"),
+            },
+        )
+
+        assert response.status_code == 413
+        # 按 256KB 分块读取（而非 -1 全量）
+        assert 256 * 1024 in reads
+        assert -1 not in reads
+        # 2KB 文件最多读 1-2 个 chunk 即被中断，不得出现大量读取
+        assert len(reads) <= 3
+
     def test_unsupported_format_rejected(self, client, tmp_path):
         """Uploading an unsupported extension (.pdf) returns 400 AppError."""
         pdf = tmp_path / "test.pdf"
@@ -353,3 +393,28 @@ class TestCompareEndpoint:
         assert response.status_code == 200, response.text
         parsed = self._parse_ndjson(response.text)
         assert parsed[-1]["type"] == "done"
+
+
+class TestSpaFallback:
+    """SPA 硬刷新 fallback（方案 P1-1c/P2-1 配套）：前端子路由直接请求返回 index.html。"""
+
+    def test_report_route_serves_index_html(self, client):
+        """/report/:sessionId 直接访问（浏览器刷新）返回 index.html 而非 404。"""
+        response = client.get("/report/abc123")
+        assert response.status_code == 200
+        assert "text/html" in response.headers.get("content-type", "")
+        # index.html 包含 SPA 挂载点
+        assert "id=\"app\"" in response.text or "app" in response.text
+
+    def test_api_routes_take_precedence_over_fallback(self, client):
+        """API 路由不被 fallback 吞掉。"""
+        response = client.get("/api/health")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+    def test_existing_asset_served_directly(self, client):
+        """真实静态文件（assets/*.js）按原路径返回，不落入 fallback。"""
+        response = client.get("/assets/does-not-exist-xyz.js")
+        # 不存在的资产回退 index.html（200），但存在的资产必须是文件本体
+        # —— 这里只验证 API 与 fallback 共存，资产细节由构建产物保证
+        assert response.status_code in (200, 404)

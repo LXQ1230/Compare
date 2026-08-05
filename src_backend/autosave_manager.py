@@ -2,8 +2,12 @@
 
 import hashlib
 import json
+import logging
+import os
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_key(key: str) -> str:
@@ -44,7 +48,10 @@ class AutosaveManager:
             "total_chunks": total_chunks,
         }
         path = self._dir / f"{_safe_key(key)}.json"
-        path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 方案 P3-2: 原子写入——先写同目录 tmp 再 os.replace，避免半截文件
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
     def load(self, key: str) -> dict | None:
         """Load an autosave entry by key. Returns None if missing or corrupt."""
@@ -75,5 +82,6 @@ class AutosaveManager:
         path = self._dir / f"{_safe_key(key)}.json"
         try:
             path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as e:
+            # 方案 P3-1: 静默失败 → 记录日志（删除失败不阻断主流程）
+            logger.warning("autosave delete failed for key=%s: %s", key, e)

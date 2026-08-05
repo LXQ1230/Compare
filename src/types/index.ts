@@ -108,7 +108,7 @@ export interface Patch {
 }
 
 export interface EditSessionDraft {
-  /** sha256(fileAName+fileAContent+fileBName+fileBContent)[:16] */
+  /** FNV-1a 32 位 hash(fileAName+fileBName+baseline 文本)（方案 P3-10 注释修正） */
   key: string
   /** 编辑后的完整文本 */
   editText: string

@@ -8,7 +8,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { useCompareStore } from "../../stores/compare";
 import { useEditorStore } from "../../stores/editor";
 import { useSearchStore } from "../../stores/search";
-import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings } from "../../render/editClassifier";
+import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings, docOffsetsOf } from "../../render/editClassifier";
 import { normalizeText } from "../../render/unicode";
 import { mergeSegments } from "../../render/incrementalClassify";
 import { buildBToAMap, detectRestores, type BToAMap } from "../../render/restoreDetector";
@@ -473,6 +473,10 @@ function compressHistory(): void {
     ],
   });
   v.scrollDOM.scrollTop = scroll;
+  // 方案 P2-6: setState 的 update 是同步且 doc 未变（docChanged=false），
+  // 583 行提前 return、标志未被消费——这里显式清掉，避免下次真实编辑被误吞
+  // （否则 updateListener 585 行会把真正需要 classify 的编辑跳过）。
+  suppressClassifyNext = false;
   suppressSave = false;
 }
 
@@ -552,14 +556,20 @@ function ensureEditor() {
     }
   });
 
-  // 方案 P5/4-10: extensions 保存到模块级，checkpoint 压缩重建 state 时复用
-  editorExtensions = [
-    diffField,
-    userField,
-    searchField,
-    bookmarkField,
-    keymap.of([...defaultKeymap, ...historyKeymap]), // rev. A1: undo/redo keybinds
-    history(), // CRITICAL: history() extension enables undo — historyKeymap alone is a no-op
+    // 方案 P5/4-10: extensions 保存到模块级，checkpoint 压缩重建 state 时复用
+    editorExtensions = [
+      diffField,
+      userField,
+      searchField,
+      bookmarkField,
+      keymap.of([...defaultKeymap, ...historyKeymap]), // rev. A1: undo/redo keybinds
+      // CRITICAL: history() extension enables undo — historyKeymap alone is a no-op.
+      // 方案 P2-6: 必须显式配置 minDepth——CM6 history 默认 minDepth=100 会把
+      // undoDepth 钳制在 ~120，导致下方 MAX_UNDO_DEPTH=500 的 checkpoint 压缩
+      // 永不触发（死代码）。配置为 MAX_UNDO_DEPTH 后压缩逻辑真正可达：
+      // undo 深度 >500 时以当前 doc 重建 state 清空历史（内存上限=500 组
+      // ChangeSet，压缩后归零，防百万字文档 history 膨胀）。
+      history({ minDepth: MAX_UNDO_DEPTH }),
     // 方案 P2: 初始只读（查看态），进入编辑时 reconfigure 为可编辑
     editableInitialExt = editableCompartment.of(EditorView.editable.of(false)),
     // 三期 B 组（4-6）：不可见字符显示开关（零宽/NBSP/控制字符）
@@ -739,14 +749,56 @@ function buildOffsetMap(): void {
   }
 }
 
+/**
+ * 方案 P2-4: 编辑态侧边栏跳转基于 workerSegments（反映当前 doc）的 doc 偏移，
+ * 消除 buildOffsetMap 基于「编辑前」段构建导致的偏移错位；ci 与 editedContexts
+ * 的 index 一一对应（mergeSegments 全量重编号后 ci 全局连续）。
+ * 查看态沿用 segOffsets（大文档查看态 CI 与偏移稳定）。
+ */
 function scrollToCi(ci: SegmentId): void {
   const v = view;
   if (!v) return;
+  if (editorStore.isEditing) {
+    // 缓存滞后（防抖窗口内有编辑但 classify 未跑）时同步 flush 一次保证最新；
+    // 缓存新鲜时零成本直接使用（flush 是 O(n) 全量 classify，百万字 ~几百 ms）
+    if (editorStore.workerVersion !== editVersion) editorStore.flushEditsSync();
+    const segs = editorStore.getEditedSegments();
+    const offsets = docOffsetsOf(segs);
+    for (let i = 0; i < segs.length; i++) {
+      const s = segs[i];
+      if (s.ci != null && s.ci === ci) {
+        const offset = offsets[i];
+        if (offset >= 0 && offset <= v.state.doc.length) {
+          v.dispatch({
+            selection: { anchor: offset },
+            effects: EditorView.scrollIntoView(offset, { y: "center" }),
+          });
+          v.focus();
+        }
+        return; // 找到即返回；未找到（变更被用户删改掉）也返回
+      }
+    }
+    return;
+  }
   const target = segOffsets.find((o) => o.ci === ci);
   if (!target) return;
   v.dispatch({
     selection: { anchor: target.start },
     effects: EditorView.scrollIntoView(target.start, { y: "center" }),
+  });
+  v.focus();
+}
+
+/**
+ * 方案 P2-2: 按绝对 doc 偏移滚动（搜索导航通道）。
+ * 与 scrollToCi 共用 CM 通道，仅入参不同（偏移 vs ci）。
+ */
+function scrollToOffset(offset: number): void {
+  const v = view;
+  if (!v || offset < 0 || offset > v.state.doc.length) return;
+  v.dispatch({
+    selection: { anchor: offset },
+    effects: EditorView.scrollIntoView(offset, { y: "center" }),
   });
   v.focus();
 }
@@ -765,16 +817,18 @@ function scrollToLastEdit(): void {
   v.focus();
 }
 
-// Expose navigation to the page (Sidebar / J-K shortcuts, rev. E3)
+// Expose navigation to the page (Sidebar / J-K shortcuts, rev. E3 + 方案 P2-2)
 function exposeNavigation(): void {
   const el = containerRef.value?.closest(".report-main") ?? null;
   if (!el) return;
   const ns = el as HTMLElement & {
     __cmScrollToCi?: (ci: SegmentId) => void;
     __cmScrollToLastEdit?: () => void;
+    __cmScrollToSearchOffset?: (offset: number) => void;
   };
   ns.__cmScrollToCi = scrollToCi;
   ns.__cmScrollToLastEdit = scrollToLastEdit;
+  ns.__cmScrollToSearchOffset = scrollToOffset;
 }
 
 watch(
@@ -887,9 +941,11 @@ onBeforeUnmount(() => {
     const ns = el as HTMLElement & {
       __cmScrollToCi?: unknown;
       __cmScrollToLastEdit?: unknown;
+      __cmScrollToSearchOffset?: unknown;
     };
     delete ns.__cmScrollToCi;
     delete ns.__cmScrollToLastEdit;
+    delete ns.__cmScrollToSearchOffset;
   }
 });
 </script>

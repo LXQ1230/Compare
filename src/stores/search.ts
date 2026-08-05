@@ -8,6 +8,7 @@ import type { SearchMatch } from '@/utils/search';
 import { searchInSegments, type SearchOptions } from '@/utils/search';
 import { useCompareStore } from './compare';
 import { useEditorStore } from './editor';
+import { docOffsetsOf } from '@/render/editClassifier';
 
 export const useSearchStore = defineStore('search', () => {
   const isOpen = ref(false);
@@ -71,6 +72,19 @@ export const useSearchStore = defineStore('search', () => {
   function scrollToActiveMatch(): void {
     const m = activeMatch.value;
     if (!m) return;
+    const editorStore = useEditorStore();
+    if (editorStore.isEditing) {
+      // 方案 P2-2: 编辑态无 ci-N DOM 锚点（CM 替代渲染），走 CM 通道——
+      // 偏移 = editedSegments（与 buildSearchDecos 同源）累计 doc 偏移 + 段内 offset。
+      const segs = editorStore.getEditedSegments();
+      if (m.segmentIndex < 0 || m.segmentIndex >= segs.length) return;
+      const offsets = docOffsetsOf(segs);
+      const host = document.querySelector('.report-main') as
+        | (HTMLElement & { __cmScrollToSearchOffset?: (o: number) => void })
+        | null;
+      host?.__cmScrollToSearchOffset?.(offsets[m.segmentIndex] + m.textOffset);
+      return;
+    }
     // Find the parent <mark data-ci> containing this match's segment
     const compareStore = useCompareStore();
     const segments = compareStore.segments;

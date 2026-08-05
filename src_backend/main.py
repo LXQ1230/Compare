@@ -5,8 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from src_backend.autosave_manager import AutosaveManager
@@ -69,11 +68,26 @@ class VersionSaveRequest(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────
 
-def _get_ext(filename: str | None) -> str:
-    """Extract lowercase file extension; returns '' when missing."""
-    if not filename:
-        return ""
-    return Path(filename).suffix.lower()
+async def _read_limited(upload: UploadFile, sink, max_bytes: int) -> int:
+    """分块读取上传，超限立即中断并抛 413（方案 P1-2，防内存 DoS）。
+
+    替代原先的全量 read + tell() 检查——超限文件不再被整体读入内存。
+    """
+    total = 0
+    while True:
+        chunk = await upload.read(256 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise AppError(
+                Severity.BLOCKING,
+                "文件过大",
+                f"文件超过 {max_bytes // 1_000_000}MB（约 500 万字）上限，请拆分后对比。",
+                status_code=413,
+            )
+        sink.write(chunk)
+    return total
 
 
 def _validate_upload(upload: UploadFile) -> str:
@@ -194,21 +208,11 @@ async def compare(
     tmp_b = tempfile.NamedTemporaryFile(suffix=ext_b, delete=False)
 
     try:
-        tmp_a.write(await fileA.read())
-        tmp_b.write(await fileB.read())
+        # 方案 P1-2: 分块读取，超限立即中断（不再全量读入内存后 tell() 检查）
+        await _read_limited(fileA, tmp_a, COMPARE_MAX_BYTES)
+        await _read_limited(fileB, tmp_b, COMPARE_MAX_BYTES)
         tmp_a.flush()
         tmp_b.flush()
-
-        # 超大文件上限（方案 L0/XL）：按上传字节数阻止，防内存 DoS
-        size_a = tmp_a.tell()
-        size_b = tmp_b.tell()
-        if size_a > COMPARE_MAX_BYTES or size_b > COMPARE_MAX_BYTES:
-            raise AppError(
-                Severity.BLOCKING,
-                "文件过大",
-                f"文件超过 {COMPARE_MAX_BYTES // 1_000_000}MB（约 500 万字）上限，请拆分后对比。",
-                status_code=413,
-            )
 
         text_a = _parse_file(tmp_a.name, ext_a)
         text_b = _parse_file(tmp_b.name, ext_b)
@@ -308,7 +312,20 @@ async def version_restore(version_id: str):
 
 DIST_DIR = Path(__file__).resolve().parents[1] / "dist"
 if DIST_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(DIST_DIR), html=True), name="static")
+    # 方案 P1-1c/P2-1 配套: SPA 硬刷新 fallback。StaticFiles(html=True) 对
+    # /report/:sessionId 等前端路由直接请求返回 404（非文件路径），导致
+    # 浏览器刷新/直接访问子路由白屏。改为 catch-all：已有静态文件按真实
+    # 路径返回，其余一律回退 index.html（前端 history 路由接管）。
+    # 路径穿越防护：候选路径必须落在 dist 目录内。
+    _DIST_ROOT = DIST_DIR.resolve()
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        if full_path:
+            candidate = (_DIST_ROOT / full_path).resolve()
+            if candidate.is_relative_to(_DIST_ROOT) and candidate.is_file():
+                return FileResponse(candidate)
+        return FileResponse(_DIST_ROOT / "index.html")
 else:
     # Dev mode fallback: redirect root to Vite dev server
     @app.get("/")

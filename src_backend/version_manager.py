@@ -9,12 +9,16 @@
 """
 
 import json
+import logging
+import os
 import re
 import time
 import uuid
 from pathlib import Path
 
 from src_backend.diff_engine import apply_patches, make_patches
+
+logger = logging.getLogger(__name__)
 
 _VERSION_ID_RE = re.compile(r'^[0-9a-f]{12}$')
 
@@ -61,7 +65,10 @@ class VersionManager:
             "stats": stats,
         }
         path = self._dir / f"{version_id}.json"
-        path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 方案 P3-2: 原子写入——先写同目录 tmp 再 os.replace，避免半截文件
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
         self._cleanup()
         return version_id
 
@@ -69,7 +76,8 @@ class VersionManager:
         """最新版本（mtime 最大）的 (id, file_a 全量, file_b 全量)；无版本 (None, '', '')。"""
         files = sorted(
             self._dir.glob("*.json"),
-            key=lambda p: p.stat().st_mtime, reverse=True,
+            # 方案 P3-9: 加文件名二级排序，消除同秒 mtime 的不确定性
+            key=lambda p: (p.stat().st_mtime, p.stem), reverse=True,
         )
         for f in files:
             try:
@@ -121,7 +129,8 @@ class VersionManager:
         entries: list[dict] = []
         for path in sorted(
             self._dir.glob("*.json"),
-            key=lambda p: p.stat().st_mtime, reverse=True,
+            # 方案 P3-9: 加文件名二级排序，消除同秒 mtime 的不确定性
+            key=lambda p: (p.stat().st_mtime, p.stem), reverse=True,
         ):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -158,10 +167,21 @@ class VersionManager:
         删除最旧版本前，将其直接后继（a_parent/b_parent 指向被删者）提升
         为全量存储——链式结构在中间节点删除后保持完整，恢复始终可用。
         """
-        files = sorted(self._dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        # 方案 P3-9: 加文件名二级排序，消除同秒 mtime 的不确定性
+        files = sorted(self._dir.glob("*.json"), key=lambda p: (p.stat().st_mtime, p.stem))
         while len(files) > 10:
             victim = files[0]
-            victim_id = self._load(victim.stem).get("id") if self._load(victim.stem) else None
+            # 方案 P3-5: 损坏文件（无 id）即无人引用，直接删除，勿再提升后继
+            victim_entry = self._load(victim.stem)
+            victim_id = victim_entry.get("id") if victim_entry else None
+            if not victim_id:
+                try:
+                    victim.unlink()
+                except OSError as e:
+                    logger.warning("version cleanup unlink failed for %s: %s", victim.name, e)
+                    break
+                files.pop(0)
+                continue
             # 提升依赖被删版本的后继（链式线性，至多一个）
             for f in files[1:]:
                 try:
@@ -178,13 +198,17 @@ class VersionManager:
                     entry["a_text"] = full_a
                     entry["b_parent"] = None
                     entry["b_text"] = full_b
-                    f.write_text(
+                    # 方案 P3-2: 原子写入
+                    tmp = f.with_suffix(".json.tmp")
+                    tmp.write_text(
                         json.dumps(entry, ensure_ascii=False, indent=2),
                         encoding="utf-8",
                     )
+                    os.replace(tmp, f)
                     break
             try:
                 victim.unlink()
-            except OSError:
+            except OSError as e:
+                logger.warning("version cleanup unlink failed for %s: %s", victim.name, e)
                 break
             files.pop(0)
