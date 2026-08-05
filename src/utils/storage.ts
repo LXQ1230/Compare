@@ -80,19 +80,27 @@ export const storage = {
   // ── edit session drafts (方案 L5/P4: IndexedDB 主体 + localStorage 摘要) ──
 
   /**
-   * 保存编辑草稿：完整数据（去 segments/baseline 冗余——segments 在
-   * IndexedDB segments store、baseline 可由 buildDocText(segments) 重建）
+   * 保存编辑草稿：完整数据（segments 在 IndexedDB segments store 仍去冗余，
+   * 但 baseline 快照与 userSegments 保留——方案 B 恢复免重算需配套校验）
    * 写入 IndexedDB drafts store；localStorage 只存索引摘要供首页列表。
    * 返回 Promise（IndexedDB 异步），调用方 fire-and-forget。
    */
   async saveEditDraft(draft: EditSessionDraft): Promise<void> {
-    // 去冗余存储（方案 L5 §4.5）：segments 与 baseline 均可重建
-    const { segments: _seg, baseline: _base, ...full } = draft;
+    // 去冗余存储（方案 L5 §4.5）：segments 仍在 segments store；baseline 快照
+    // 与 userSegments 保留（方案 B：恢复时逐字节复用 baseline，userSegments 直接
+    // buildDecoSet，免 DMP diff——二者配套，缺一不可）
+    const { segments: _seg, ...full } = draft;
     // pinia ref 数组是 Proxy，structured clone 会抛 DataCloneError
-    // （"[object Array] could not be cloned"）→ 转普通数组再存
+    // （"[object Object] could not be cloned"）→ 转普通数组再存。
+    // 注意：processedCis（number）浅拷贝即可；userSegments 元素是 Segment 对象，
+    // 经 pinia deep reactive 后为 Proxy，浅拷贝数组不够——必须逐段 {...s} 解构
+    // 成纯对象，否则 IDB put 抛 DataCloneError（方案 B 实测踩坑）。
     const plain = {
       ...full,
       processedCis: Array.isArray(full.processedCis) ? [...full.processedCis] : full.processedCis,
+      userSegments: Array.isArray(full.userSegments)
+        ? full.userSegments.map((s) => ({ ...s }))
+        : full.userSegments,
     };
     await indexedDB.put('drafts', { key: draft.key, value: plain });
     // 方案 P2-7: 摘要存真实 processedCis（紧凑编码），消除 listEditDrafts
@@ -113,13 +121,14 @@ export const storage = {
     }
   },
 
-  /** 加载完整草稿（IndexedDB）。baseline/segments 字段由调用方重建。 */
+  /** 加载完整草稿（IndexedDB）。segments 字段由调用方重建（segments store）。 */
   async loadEditDraft(key: string): Promise<EditSessionDraft | null> {
     const row = await indexedDB.get('drafts', key);
     if (!row) return null;
     return {
-      ...(row.value as Omit<EditSessionDraft, 'baseline' | 'segments'>),
-      baseline: '',
+      ...(row.value as Omit<EditSessionDraft, 'segments'>),
+      // 方案 B：baseline 快照从存储原样返回（旧草稿无该字段 → undefined，
+      // 调用方重建；userSegments 同源同失，天然配套）
       segments: undefined,
     } as EditSessionDraft;
   },

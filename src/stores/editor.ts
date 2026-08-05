@@ -24,12 +24,22 @@ export const useEditorStore = defineStore("editor", () => {
   // 消除"渲染一次 = 全量 classifyEdit 一次"的高频重算。
   const workerSegments = ref<Segment[] | null>(null);
   const workerVersion = ref(0);
+  /** 最近一次成功 classify 的编辑文本快照（方案 B：saveDraft 新鲜度校验） */
+  const workerEditedText = ref("");
 
-  /** 由 CodeMirrorDiff 在每次 classify（Worker 或主线程）完成后写入。 */
-  function setWorkerResult(version: number, segments: Segment[]): void {
+  /**
+   * 由 CodeMirrorDiff 在每次 classify（Worker 或主线程）完成后写入。
+   * editedText 参数记录该结果对应的编辑文本（默认取当前 editText——
+   * 调用方均先写 editText 再调本函数），saveDraft 据此判断缓存是否可复用。
+   */
+  function setWorkerResult(version: number, segments: Segment[], editedText = editText.value): void {
     workerVersion.value = version;
     workerSegments.value = segments;
+    workerEditedText.value = editedText;
   }
+
+  /** 本次会话待用的草稿 userSegments（方案 B：恢复免重算，由 resumeDraft/enterEdit 带入） */
+  const draftUserSegments = ref<Segment[] | null>(null);
 
   // ── Edit session persistence state (rev. edit-persistence) ───────
   const cursorPos = ref(0);
@@ -132,6 +142,13 @@ export const useEditorStore = defineStore("editor", () => {
     // (discardDraft/resetToOriginal) or undo-to-baseline from re-creating an
     // empty draft in storage.
     if (!hasEdits.value && (editText.value === originalBaseline.value || editText.value === '')) return;
+    // 方案 B：仅缓存"与当前 editText 配套"的 classify 结果（workerEditedText 快照
+    // 与 editText 逐字节一致才可复用）；worker 未算完/缓存落后 → 不存 userSegments，
+    // 恢复时回退 worker 异步重算。保存路径永不阻塞。
+    const cacheSegs = workerSegments.value;
+    const cacheFresh = cacheSegs !== null
+      && workerEditedText.value === editText.value
+      && cacheSegs.length > 0;
     const draft: EditSessionDraft = {
       key: draftKey.value,
       editText: editText.value,
@@ -151,6 +168,8 @@ export const useEditorStore = defineStore("editor", () => {
       segments: compareStore.segments,
       stats: { ...compareStore.stats },
       totalChunks: compareStore.meta?.totalChunks ?? 0,
+      // 方案 B：恢复免重算 DMP diff（仅存配套结果；IndexedDB 主体，不入 localStorage/后端）
+      userSegments: cacheFresh ? cacheSegs : undefined,
     };
     // 方案 L5/P5：IndexedDB 主体 + localStorage 摘要（异步 fire-and-forget）
     storage.saveEditDraft(draft).catch(() => { /* best-effort */ });
@@ -212,6 +231,8 @@ export const useEditorStore = defineStore("editor", () => {
       // Draft exists with real edits — set pending flag for UI confirmation
       hasPendingDraft.value = true;
       pendingDraft.value = draft;
+      // 方案 B：携带草稿缓存的 userSegments（恢复免重算；undefined=旧草稿回退 worker）
+      draftUserSegments.value = draft.userSegments ?? null;
       // Pre-load draft data into editor state
       editSegments.value = cloneSegments(compareStore.segments);
       editText.value = draft.editText;
@@ -225,6 +246,7 @@ export const useEditorStore = defineStore("editor", () => {
       workerSegments.value = null;
     } else {
       // No draft — fresh edit session
+      draftUserSegments.value = null;
       editSegments.value = cloneSegments(compareStore.segments);
       // 三期 B 组：初始 doc 与 baseline 同变换（保证一致性）
       editText.value = applyNormalizations(buildDocText(editSegments.value));
@@ -238,6 +260,7 @@ export const useEditorStore = defineStore("editor", () => {
   function discardDraft(): void {
     hasPendingDraft.value = false;
     pendingDraft.value = null;
+    draftUserSegments.value = null;
     editSegments.value = cloneSegments(compareStore.segments);
     editText.value = applyNormalizations(buildDocText(editSegments.value));
     originalBaseline.value = applyNormalizations(buildDocText(compareStore.segments));
@@ -282,6 +305,8 @@ export const useEditorStore = defineStore("editor", () => {
     scrollPos.value = draft.scrollPos ?? 0;
     lastEditOffset.value = draft.lastEditOffset ?? -1;
     processedCis.value = draft.processedCis ?? [];
+    // 方案 B：携带草稿缓存的 userSegments（恢复免重算；undefined=旧草稿回退 worker）
+    draftUserSegments.value = draft.userSegments ?? null;
     hasPendingDraft.value = false;
     pendingDraft.value = null;
     isEditing.value = true;
@@ -301,6 +326,7 @@ export const useEditorStore = defineStore("editor", () => {
     lastEditOffset.value = -1;
     processedCis.value = [];
     workerSegments.value = null;
+    draftUserSegments.value = null;
     resetToken.value++;
   }
 
@@ -359,7 +385,7 @@ export const useEditorStore = defineStore("editor", () => {
     fullwidthHalfwidth, setFullwidthHalfwidth,
     cursorPos, scrollPos, lastEditOffset, processedCis,
     draftKey, hasPendingDraft, pendingDraft,
-    workerSegments, workerVersion, setWorkerResult,
+    workerSegments, workerVersion, setWorkerResult, draftUserSegments,
     registerFlush, flushEditsSync,
     enterEdit, exitEdit, resetToOriginal, discardDraft, acceptDraft,
     resumeFromDraft,

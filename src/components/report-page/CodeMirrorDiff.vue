@@ -688,21 +688,42 @@ function ensureEditor() {
 
   // If a draft was loaded, apply user decorations + restore cursor/scroll/bookmark
   if (editorStore.hasEdits && editorStore.editText && editorStore.editText !== baseline) {
-    try {
-      const userResult = classifyEdit(baseline, editorStore.editText);
-      view.dispatch({
-        effects: setUserDecos.of(
-          userResult.dirty ? buildDecoSet(userResult.segments) : Decoration.none,
-        ),
+    const cachedUser = editorStore.draftUserSegments ?? null;
+    if (cachedUser && cachedUser.length > 0) {
+      // 方案 B（主路径）：直接复用草稿缓存的分类结果，免 DMP diff——恢复 70 万字
+      // 草稿曾因主线程同步 classifyEdit 白屏 5-20s。缓存与 baseline/editText 同源
+      // 配套（保存时 workerEditedText === editText 才写入），无错位风险。
+      try {
+        view.dispatch({ effects: setUserDecos.of(buildDecoSet(cachedUser)) });
+        rebuildDiffLayer(view, cachedUser);
+        editorStore.setWorkerResult(++editVersion, cachedUser, editorStore.editText);
+      } catch (e) {
+        console.error("draft restore deco build failed", e);
+      }
+    } else {
+      // 回退路径（旧草稿/缓存未就绪）：worker 异步重算，UI 零阻塞
+      const version = ++editVersion;
+      classifyInWorker(baseline, editorStore.editText, version, (resp) => {
+        const v = view;
+        if (!v) return;
+        if (resp === null || resp.type === "error") {
+          // Worker 不可用 → 主线程同步兜底（一次性，仅在降级时发生）
+          try {
+            applyClassifyResult(classifyEdit(baseline, editorStore.editText), version);
+          } catch (e) {
+            console.error("draft restore classifyEdit failed", e);
+          }
+          return;
+        }
+        if (resp.version !== version) return;
+        applyClassifyResult(
+          { dirty: resp.dirty ?? false, segments: resp.segments ?? null },
+          version,
+        );
       });
-      if (userResult.dirty) rebuildDiffLayer(view, userResult.segments);
-      // 方案 L4：恢复草稿时初始化 store 缓存
-      editorStore.setWorkerResult(++editVersion, userResult.dirty ? userResult.segments : []);
-    } catch (e) {
-      console.error("draft restore classifyEdit failed", e);
     }
 
-    // Restore cursor position (clamp to doc length)
+    // Restore cursor position (clamp to doc length) — 不等 worker，立即执行
     const savedCursor = editorStore.cursorPos;
     if (savedCursor > 0 && savedCursor <= view.state.doc.length) {
       view.dispatch({

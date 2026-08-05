@@ -134,4 +134,10 @@ export interface EditSessionDraft {
   stats?: CompareStats
   /** 对比 chunk 数 */
   totalChunks?: number
+  /**
+   * 用户编辑分类结果（方案 B：恢复免重算 DMP diff）。
+   * 保存时缓存"与 editText 配套"的 workerSegments；undefined=缓存未就绪/旧草稿，
+   * 恢复时回退 worker 异步重算。仅存 IndexedDB（体积 ~2-5MB，严禁入 localStorage/后端）。
+   */
+  userSegments?: Segment[]
 }

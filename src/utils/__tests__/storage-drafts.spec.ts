@@ -10,9 +10,9 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  idbPut: vi.fn(() => Promise.resolve()),
-  idbGet: vi.fn(() => Promise.resolve(undefined)),
-  idbDelete: vi.fn(() => Promise.resolve()),
+  idbPut: vi.fn((_store: string, item: { key?: string; value?: Record<string, unknown> }) => Promise.resolve()),
+  idbGet: vi.fn((): Promise<{ key: string; value: unknown } | undefined> => Promise.resolve(undefined)),
+  idbDelete: vi.fn((_store: string, _key: string) => Promise.resolve()),
   idbPutAll: vi.fn(() => Promise.resolve()),
   idbGetAll: vi.fn(() => Promise.resolve([])),
   idbClear: vi.fn(() => Promise.resolve()),
@@ -93,6 +93,84 @@ describe('saveEditDraft 摘要 (方案 P2-7: 真实 processedCis)', () => {
     })).rejects.toThrow('quota');
     // IDB 失败 → 异常抛出，摘要未写（调用方 fire-and-forget，首页不会展示孤儿）
     expect(localStorage.getItem(PREFIX + 'k2')).toBeNull();
+  });
+});
+
+describe('saveEditDraft 主体 (方案 B: baseline 快照 + userSegments 保留)', () => {
+  it('IDB 主体保留 baseline 快照与 userSegments（不再剥离），摘要不含正文', async () => {
+    const userSegs = [
+      { text: '新', operation: 'add' as const, origin: 'user' as const, ci: 1 },
+    ];
+    await storage.saveEditDraft({
+      key: 'k8',
+      editText: 'edited full text',
+      baseline: 'original baseline',
+      hasEdits: true,
+      cursorPos: 4,
+      scrollPos: 20,
+      lastEditOffset: 2,
+      processedCis: [1],
+      fileAName: 'a.txt',
+      fileBName: 'b.txt',
+      timestamp: 5000,
+      segments: [{ text: 'x', operation: 'none' as const, origin: 'original' as const }],
+      userSegments: userSegs,
+    });
+    // IDB value: segments 仍剥离（segments store 承担），baseline/userSegments 保留
+    const idbValue = mocks.idbPut.mock.calls[0]![1]!.value!;
+    expect(idbValue.baseline).toBe('original baseline');
+    expect(idbValue.userSegments).toEqual(userSegs);
+    expect(idbValue.segments).toBeUndefined();
+    // 摘要：仅索引字段，不含 editText/userSegments
+    const summary = JSON.parse(localStorage.getItem(PREFIX + 'k8')!);
+    expect(summary.editText).toBeUndefined();
+    expect(summary.userSegments).toBeUndefined();
+  });
+
+  it('loadEditDraft 原样返回 baseline/userSegments；无该字段的旧草稿返回 undefined 而非强制清空', async () => {
+    // 新草稿：baseline/userSegments 原样返回
+    mocks.idbGet.mockResolvedValue({
+      key: 'k9',
+      value: {
+        key: 'k9',
+        editText: 'edited',
+        baseline: 'baseline',
+        hasEdits: true,
+        cursorPos: 0,
+        scrollPos: 0,
+        lastEditOffset: -1,
+        processedCis: [],
+        fileAName: 'a.txt',
+        fileBName: 'b.txt',
+        timestamp: 6000,
+        userSegments: [{ text: '新', operation: 'add', origin: 'user', ci: 1 }],
+      },
+    });
+    const loaded = await storage.loadEditDraft('k9');
+    expect(loaded?.baseline).toBe('baseline');
+    expect(loaded?.userSegments).toEqual([{ text: '新', operation: 'add', origin: 'user', ci: 1 }]);
+    // segments 字段仍置 undefined（由 segments store 提供）
+    expect(loaded?.segments).toBeUndefined();
+
+    // 旧草稿：无 baseline/userSegments 字段 → undefined（调用方重建/回退，不伪造空串）
+    mocks.idbGet.mockResolvedValue({
+      key: 'k10',
+      value: {
+        key: 'k10',
+        editText: 'edited',
+        hasEdits: true,
+        cursorPos: 0,
+        scrollPos: 0,
+        lastEditOffset: -1,
+        processedCis: [],
+        fileAName: 'a.txt',
+        fileBName: 'b.txt',
+        timestamp: 7000,
+      },
+    });
+    const legacy = await storage.loadEditDraft('k10');
+    expect(legacy?.baseline).toBeUndefined();
+    expect(legacy?.userSegments).toBeUndefined();
   });
 });
 

@@ -385,7 +385,10 @@ export function diffSafely(baseline: string, edited: string): [number, string][]
   const pb = protectAstral(edited, sharedUsed);
 
   const dmp = new diff_match_patch();
-  dmp.Diff_Timeout = 0;
+  // 方案 B（防御）：Diff_Timeout 0→3s。无超时对 70 万字文档的任何漏网同步路径
+  // （导出 flush、worker 不可用降级主线程）都会白屏数秒；3s 有界保证最坏情况
+  // 有上限，DMP 超时返回半结果（质量下降但可接受，仅兜底路径）。
+  dmp.Diff_Timeout = 3;
 
   let raw: [number, string][];
 

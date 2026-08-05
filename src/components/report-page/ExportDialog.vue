@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import { useCompareStore } from '../../stores/compare';
 import { useEditorStore } from '../../stores/editor';
 import { classifyEdit, buildDocText, normalizeLineEndings } from '../../render/editClassifier';
 import { mergeLayers } from '../../export/mergeLayers';
 import { exportToTXT, exportToHTML, exportToMD, downloadFile } from '../../export/exporters';
+import { buildExportFilename, sanitizeExportFilename } from '../../export/filename';
 
 const compareStore = useCompareStore();
 const editorStore = useEditorStore();
@@ -17,6 +19,44 @@ const formats = [
 ];
 
 /**
+ * Edit-mode rename dialog state. null = closed.
+ * View mode exports immediately with the default name (no dialog).
+ */
+const renameTarget = ref<{ formatId: string; filename: string } | null>(null);
+const renameInput = ref('');
+
+function defaultFilename(formatId: string): string {
+  return buildExportFilename({
+    fileAName: compareStore.fileAName,
+    fileBName: compareStore.fileBName,
+    mode: editorStore.isEditing ? 'edit' : 'view',
+    formatId,
+  });
+}
+
+function onFormatClick(formatId: string): void {
+  if (editorStore.isEditing) {
+    // 编辑模式：弹出重命名框，预填默认文件名，用户可修改后导出。
+    renameInput.value = defaultFilename(formatId);
+    renameTarget.value = { formatId, filename: renameInput.value };
+  } else {
+    // 查看模式：按默认命名规则直接导出。
+    doExport(formatId, defaultFilename(formatId));
+  }
+}
+
+function confirmRename(): void {
+  if (!renameTarget.value) return;
+  const finalName = sanitizeExportFilename(renameInput.value, renameTarget.value.filename);
+  doExport(renameTarget.value.formatId, finalName);
+  renameTarget.value = null;
+}
+
+function cancelRename(): void {
+  renameTarget.value = null;
+}
+
+/**
  * Force-flush any pending debounced classify, so the exported content is
  * never behind the cursor (rev. D1 / 6-5). The flush runs synchronously
  * through the callback registered by CodeMirrorDiff.
@@ -27,7 +67,7 @@ function flushEdits(): void {
   }
 }
 
-function doExport(formatId: string) {
+function doExport(formatId: string, filename: string) {
   const fmt = formats.find((f) => f.id === formatId);
   if (!fmt) return;
 
@@ -60,7 +100,7 @@ function doExport(formatId: string) {
     else if (formatId === 'md') content = exportToMD(segments);
     else content = exportToTXT(segments);
   }
-  downloadFile(content, `compare-report.${formatId}`, fmt.mime);
+  downloadFile(content, filename, fmt.mime);
 }
 </script>
 
@@ -68,10 +108,29 @@ function doExport(formatId: string) {
   <div class="export-overlay" @click.self="$emit('close')">
     <div class="export-dialog">
       <h3 class="dialog-title">导出对比结果</h3>
-      <div v-for="fmt in formats" :key="fmt.id" class="export-option" @click="doExport(fmt.id)">
+      <div v-for="fmt in formats" :key="fmt.id" class="export-option" @click="onFormatClick(fmt.id)">
         {{ fmt.label }}
       </div>
       <button class="close-btn" @click="$emit('close')">关闭</button>
+    </div>
+  </div>
+
+  <div v-if="renameTarget" class="export-overlay" @click.self="cancelRename">
+    <div class="export-dialog">
+      <h3 class="dialog-title">导出并重命名</h3>
+      <p class="rename-hint">编辑模式导出文件，可修改文件名（默认可直接使用）：</p>
+      <input
+        v-model="renameInput"
+        class="rename-input"
+        type="text"
+        autofocus
+        @keyup.enter="confirmRename"
+        @keyup.esc="cancelRename"
+      />
+      <div class="rename-actions">
+        <button class="rename-btn primary" @click="confirmRename">确认导出</button>
+        <button class="rename-btn" @click="cancelRename">取消</button>
+      </div>
     </div>
   </div>
 </template>
@@ -91,5 +150,21 @@ function doExport(formatId: string) {
 .close-btn {
   margin-top: 8px; padding: 8px 24px; border: 1px solid var(--color-border);
   border-radius: 6px; background: var(--color-bg); cursor: pointer;
+}
+.rename-hint { font-size: 13px; color: var(--color-text-secondary, #888); margin-bottom: 10px; }
+.rename-input {
+  width: 100%; box-sizing: border-box; padding: 8px 10px;
+  border: 1px solid var(--color-border); border-radius: 6px;
+  background: var(--color-bg); color: var(--color-text); font-size: 14px;
+}
+.rename-input:focus { outline: none; border-color: var(--color-accent, #4a7dff); }
+.rename-actions { margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end; }
+.rename-btn {
+  padding: 8px 16px; border: 1px solid var(--color-border); border-radius: 6px;
+  background: var(--color-bg); color: var(--color-text); cursor: pointer; font-size: 14px;
+}
+.rename-btn.primary {
+  background: var(--color-accent, #4a7dff); border-color: var(--color-accent, #4a7dff);
+  color: #fff;
 }
 </style>

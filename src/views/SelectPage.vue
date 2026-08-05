@@ -5,7 +5,6 @@ import DropZone from '../components/select-page/DropZone.vue';
 import { useCompareStore } from '../stores/compare';
 import { useEditorStore } from '../stores/editor';
 import { storage } from '../utils/storage';
-import { indexedDB } from '../utils/indexeddb';
 import { buildDocText, normalizeLineEndings } from '../render/editClassifier';
 import { api } from '../utils/api';
 import type { EditSessionDraft, Segment, CompareStats } from '../types';
@@ -111,18 +110,16 @@ async function resumeDraft(draft: EditSessionDraft): Promise<void> {
   isStarting.value = true;
   error.value = '';
   try {
-    // 1. IndexedDB 完整草稿（方案 L5：正文主体在 IndexedDB drafts store）
-    let full = await storage.loadEditDraft(draft.key);
-    // 2. IndexedDB segments（免重跑对比）
-    let segs: Segment[] = [];
-    try {
-      const rows = await indexedDB.getAll('segments');
-      segs = rows
-        .sort((a, b) => a.index - b.index)
-        .flatMap((r) => r.data as Segment[]);
-    } catch {
-      // ignore — fall back to backend
-    }
+    // 1+2. IndexedDB 完整草稿（方案 L5：正文主体在 IndexedDB drafts store）
+    // + segments（免重跑对比）——并行读（方案 B：串行 → Promise.all，省 ~0.2s）
+    let full: EditSessionDraft | null = null;
+    const [loaded, segs] = await Promise.all([
+      storage.loadEditDraft(draft.key),
+      storage.loadSegments()
+        .then((rows) => rows.flat())
+        .catch(() => [] as Segment[]),
+    ]);
+    full = loaded;
     // 3. 缺失时回退后端 autosave（跨设备；方案 L5/P5：后端只有 editText/定位字段，
     //    segments/baseline 均需本地 IndexedDB 提供——segments 缺失则无法恢复对比数据）
     if (!full || !full.editText) {
