@@ -8,12 +8,26 @@ import {
   normalizeText,
   normalizeFullwidth,
   normalizeLineEndings,
+  normalizeParagraphs,
   stripBOM,
   diffSafely,
   resolvePunctSubstring,
   resolvePunctAlignment,
   resolveWhitespace,
 } from '@/render/unicode';
+
+describe('normalizeParagraphs (2026-08-05 编辑换行)', () => {
+  it('U+2029 → LF，长度不变（各 1 unit）', () => {
+    const t = '第一段\u2029第二段';
+    expect(normalizeParagraphs(t)).toBe('第一段\n第二段');
+    expect(normalizeParagraphs(t).length).toBe(t.length);
+  });
+
+  it('普通文本不受影响（幂等）', () => {
+    expect(normalizeParagraphs('如是我聞。一時。')).toBe('如是我聞。一時。');
+    expect(normalizeParagraphs('a\nb\r\nc')).toBe('a\nb\r\nc');
+  });
+});
 
 describe('normalizeText (4-5)', () => {
   it('strips leading BOM', () => {

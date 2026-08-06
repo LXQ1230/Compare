@@ -36,6 +36,17 @@ export function normalizeText(text: string): string {
   return normalizeLineEndings(stripBOM(text)).normalize("NFC");
 }
 
+/**
+ * IDML 段落分隔符 U+2029 → LF（2026-08-05，编辑/CM 只读换行修复）：
+ * CodeMirror 只把 \n 当换行，U+2029 在 doc 中不换行导致段落粘连。
+ * 编辑态基线/初始 doc 统一变换（store.applyNormalizations 与
+ * CodeMirrorDiff.ensureEditor 共用）；长度不变（各 1 unit），装饰偏移零影响。
+ * 查看态 v-html 仍保留 U+2029（segmentRenderer 转 br.para-break）。
+ */
+export function normalizeParagraphs(text: string): string {
+  return text.replace(/\u2029/g, "\n");
+}
+
 // ── 全角 → 半角（4-7，可选开关，默认关）─────────────────────────
 
 /** 常见全角标点 → 半角。佛经等 CJK 文档中全角标点是正式内容，默认不归一。 */

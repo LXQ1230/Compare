@@ -43,6 +43,7 @@ class VersionManager:
         style_a: list | None = None,
         style_b: list | None = None,
         doc_meta: dict | None = None,
+        session_key: str = "",
     ) -> str:
         """Persist a version and return its id. Auto-cleans oldest if >10.
 
@@ -51,9 +52,11 @@ class VersionManager:
         style_a/style_b：IDML 样式区间（方案 §6.6 链路 1，全量存——
         版本数量少、仅 IDML 携带，非 IDML 为空列表零开销）。
         doc_meta：IDML 排版元数据（竖排/行高，随版本恢复）。
+        session_key：文件对分组标识（fileAName+fileBName+baseline 的 hash），
+        用于按文件对过滤版本列表。空串兼容旧格式（全局版本）。
         """
         version_id = uuid.uuid4().hex[:12]
-        prev_id, prev_a, prev_b = self._latest_full()
+        prev_id, prev_a, prev_b = self._latest_full(session_key)
         if prev_id:
             a_text = make_patches(prev_a, file_a_content)
             a_parent = prev_id
@@ -72,6 +75,7 @@ class VersionManager:
             "style_a": style_a or [],
             "style_b": style_b or [],
             "doc_meta": doc_meta or {},
+            "session_key": session_key,
         }
         path = self._dir / f"{version_id}.json"
         # 方案 P3-2: 原子写入——先写同目录 tmp 再 os.replace，避免半截文件
@@ -81,8 +85,11 @@ class VersionManager:
         self._cleanup()
         return version_id
 
-    def _latest_full(self) -> tuple[str | None, str, str]:
-        """最新版本（mtime 最大）的 (id, file_a 全量, file_b 全量)；无版本 (None, '', '')。"""
+    def _latest_full(self, session_key: str = "") -> tuple[str | None, str, str]:
+        """最新版本（mtime 最大）的 (id, file_a 全量, file_b 全量)；无版本 (None, '', '')。
+        
+        session_key 非空时只在该文件对分组内查找最新版本（patch 链同组内构建）。
+        """
         files = sorted(
             self._dir.glob("*.json"),
             # 方案 P3-9: 加文件名二级排序，消除同秒 mtime 的不确定性
@@ -93,6 +100,10 @@ class VersionManager:
                 entry = json.loads(f.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
+            # 按 session_key 过滤（空 key 兼容旧全局版本）
+            if session_key:
+                if entry.get("session_key", "") != session_key:
+                    continue
             try:
                 return entry["id"], self._resolve_content(entry, "a"), self._resolve_content(entry, "b")
             except Exception:
@@ -133,8 +144,11 @@ class VersionManager:
 
     # ── list / restore ────────────────────────────────────────────
 
-    def list(self) -> list[dict]:
-        """Return versions ordered by newest first."""
+    def list(self, session_key: str = "") -> list[dict]:
+        """Return versions ordered by newest first.
+        
+        session_key 非空时只返回该文件对分组的版本。
+        """
         entries: list[dict] = []
         for path in sorted(
             self._dir.glob("*.json"),
@@ -145,9 +159,14 @@ class VersionManager:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
+            # 按 session_key 过滤（空 key 返回全部，兼容旧全局版本）
+            if session_key:
+                if data.get("session_key", "") != session_key:
+                    continue
             entries.append({
                 "id": data.get("id", ""), "label": data.get("label", ""),
                 "time": data.get("time", 0), "stats": data.get("stats", {}),
+                "session_key": data.get("session_key", ""),
             })
         return entries
 
@@ -174,53 +193,74 @@ class VersionManager:
     # ── cleanup ───────────────────────────────────────────────────
 
     def _cleanup(self) -> None:
-        """Keep at most 10 versions; delete oldest by mtime.
+        """Keep at most 10 versions per session_key group; delete oldest by mtime.
 
         删除最旧版本前，将其直接后继（a_parent/b_parent 指向被删者）提升
         为全量存储——链式结构在中间节点删除后保持完整，恢复始终可用。
         """
-        # 方案 P3-9: 加文件名二级排序，消除同秒 mtime 的不确定性
-        files = sorted(self._dir.glob("*.json"), key=lambda p: (p.stat().st_mtime, p.stem))
-        while len(files) > 10:
-            victim = files[0]
-            # 方案 P3-5: 损坏文件（无 id）即无人引用，直接删除，勿再提升后继
-            victim_entry = self._load(victim.stem)
-            victim_id = victim_entry.get("id") if victim_entry else None
-            if not victim_id:
+        # 按 session_key 分组，每组独立保留 10 个版本
+        all_files = list(self._dir.glob("*.json"))
+        # 收集每个 session_key 组下的文件
+        groups: dict[str, list[Path]] = {}
+        for p in all_files:
+            try:
+                entry = json.loads(p.read_text(encoding="utf-8"))
+                sk = entry.get("session_key", "")
+            except (json.JSONDecodeError, OSError):
+                sk = "__corrupt__"
+            groups.setdefault(sk, []).append(p)
+
+        for sk, files in groups.items():
+            if sk == "__corrupt__":
+                # 损坏文件直接清理
+                for f in files:
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+                continue
+            # 方案 P3-9: 加文件名二级排序，消除同秒 mtime 的不确定性
+            files = sorted(files, key=lambda p: (p.stat().st_mtime, p.stem))
+            while len(files) > 10:
+                victim = files[0]
+                # 方案 P3-5: 损坏文件（无 id）即无人引用，直接删除，勿再提升后继
+                victim_entry = self._load(victim.stem)
+                victim_id = victim_entry.get("id") if victim_entry else None
+                if not victim_id:
+                    try:
+                        victim.unlink()
+                    except OSError as e:
+                        logger.warning("version cleanup unlink failed for %s: %s", victim.name, e)
+                        break
+                    files.pop(0)
+                    continue
+                # 提升依赖被删版本的后继（链式线性，至多一个）
+                for f in files[1:]:
+                    try:
+                        entry = json.loads(f.read_text(encoding="utf-8"))
+                    except (json.JSONDecodeError, OSError):
+                        continue
+                    if entry.get("a_parent") == victim_id or entry.get("b_parent") == victim_id:
+                        try:
+                            full_a = self._resolve_content(entry, "a")
+                            full_b = self._resolve_content(entry, "b")
+                        except Exception:
+                            continue
+                        entry["a_parent"] = None
+                        entry["a_text"] = full_a
+                        entry["b_parent"] = None
+                        entry["b_text"] = full_b
+                        # 方案 P3-2: 原子写入
+                        tmp = f.with_suffix(".json.tmp")
+                        tmp.write_text(
+                            json.dumps(entry, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        os.replace(tmp, f)
+                        break
                 try:
                     victim.unlink()
                 except OSError as e:
                     logger.warning("version cleanup unlink failed for %s: %s", victim.name, e)
                     break
                 files.pop(0)
-                continue
-            # 提升依赖被删版本的后继（链式线性，至多一个）
-            for f in files[1:]:
-                try:
-                    entry = json.loads(f.read_text(encoding="utf-8"))
-                except (json.JSONDecodeError, OSError):
-                    continue
-                if entry.get("a_parent") == victim_id or entry.get("b_parent") == victim_id:
-                    try:
-                        full_a = self._resolve_content(entry, "a")
-                        full_b = self._resolve_content(entry, "b")
-                    except Exception:
-                        continue
-                    entry["a_parent"] = None
-                    entry["a_text"] = full_a
-                    entry["b_parent"] = None
-                    entry["b_text"] = full_b
-                    # 方案 P3-2: 原子写入
-                    tmp = f.with_suffix(".json.tmp")
-                    tmp.write_text(
-                        json.dumps(entry, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-                    os.replace(tmp, f)
-                    break
-            try:
-                victim.unlink()
-            except OSError as e:
-                logger.warning("version cleanup unlink failed for %s: %s", victim.name, e)
-                break
-            files.pop(0)

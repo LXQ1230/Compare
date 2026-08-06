@@ -125,6 +125,16 @@ html, body {
   display: block;
   line-height: 1.2;
 }
+/* 竖排文档（2026-08-05 修复）：vertical-rl 下 flex-direction:row 的主轴是
+   垂直方向 → 割注列上下叠成单列长条，不成"双排"。改 column 使列沿 block
+   方向（水平）左右并排——右列在前，符合竖排读序（实测几何正确）。 */
+.doc-vertical .warichu-pair {
+  flex-direction: column;
+  align-items: center;
+}
+.doc-vertical .warichu-col + .warichu-col {
+  margin-left: 2px;
+}
 
 /* ── Change-item flash when scrolled into view ───────────── */
 .ci-flash {

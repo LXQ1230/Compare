@@ -41,6 +41,14 @@ export const useCompareStore = defineStore('compare', () => {
     return s === 'M' || s === 'L';
   });
 
+  /**
+   * 竖排 IDML（docMeta.vertical=true，方案 §6.4）：大文档查看态走 v-html
+   * 竖排渲染（UnifiedView/SplitView），CM 只读实例仅服务横排大文档——
+   * CodeMirror 6 不支持 writing-mode:vertical-rl（2026-08-06 用户实测
+   * 497 级 IDML 查看模式横排的根因）。小文档 IDML 原本就走 v-html。
+   */
+  const isVerticalIdml = computed(() => meta.value?.docMeta?.vertical === true);
+
   function reset(): void {
     segments.value = [];
     contexts.value = [];
@@ -412,7 +420,7 @@ export const useCompareStore = defineStore('compare', () => {
   return {
     segments, contexts, meta, error,
     isComparing, isComplete, currentPhase, progress,
-    stats, fileAName, fileBName, sessionId, isLargeDoc,
+    stats, fileAName, fileBName, sessionId, isLargeDoc, isVerticalIdml,
     reset, startCompare, buildContexts, restoreFromDraft,
     restoreVersionSession, buildSegmentsFromTexts,
   };

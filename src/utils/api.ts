@@ -17,7 +17,7 @@ const BASE = '/api';
 const HEALTH_TIMEOUT_MS = 5_000;
 
 /** Upper bound for the entire compare flow (upload + stream). */
-const COMPARE_TIMEOUT_MS = 120_000;
+const COMPARE_TIMEOUT_MS = 300_000;
 
 /** Default timeout for autosave/version endpoints (rev. F3 — they were bare fetch()). */
 const API_TIMEOUT_MS = 10_000;
@@ -211,6 +211,7 @@ export const api = {
     style_a?: StyleRange[];
     style_b?: StyleRange[];
     doc_meta?: Record<string, unknown>;
+    session_key?: string;
   }): Promise<{ status: string; id: string }> {
     const res = await fetchWithTimeout(`${BASE}/versions/save`, {
       method: 'POST',
@@ -222,8 +223,11 @@ export const api = {
     return res.json() as Promise<{ status: string; id: string }>;
   },
 
-  async versionList(): Promise<{ status: string; versions: Record<string, unknown>[] }> {
-    const res = await fetchWithTimeout(`${BASE}/versions/list`, {
+  async versionList(sessionKey?: string): Promise<{ status: string; versions: Record<string, unknown>[] }> {
+    const url = sessionKey
+      ? `${BASE}/versions/list?session_key=${encodeURIComponent(sessionKey)}`
+      : `${BASE}/versions/list`;
+    const res = await fetchWithTimeout(url, {
       method: 'GET',
       timeoutMs: API_TIMEOUT_MS,
     });

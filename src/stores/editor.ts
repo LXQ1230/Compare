@@ -3,8 +3,9 @@ import { ref, computed } from "vue";
 import type { Segment, ChangeContext, EditSessionDraft, StyleRange } from "@/types";
 import { asSegmentId } from "@/types";
 import { useCompareStore } from "./compare";
-import { buildDocText, buildBaselineStyles, normalizeLineEndings } from "@/render/editClassifier";
-import { normalizeText, normalizeFullwidth } from "@/render/unicode";
+import { useVersionStore } from "./version";
+import { buildDocText, buildBaselineStyles, buildOriginalText, buildSideStyles, normalizeLineEndings } from "@/render/editClassifier";
+import { normalizeText, normalizeFullwidth, normalizeParagraphs } from "@/render/unicode";
 import { storage } from "@/utils/storage";
 import { api } from "@/utils/api";
 import { fnv1aHash } from "@/utils/hash";
@@ -56,19 +57,23 @@ export const useEditorStore = defineStore("editor", () => {
    */
   const baselineStyle = ref<StyleRange[] | undefined>(undefined);
 
-  /** Editor font size in pixels — persisted to localStorage (range 12–24, default 16). */
+  /** Editor font size in pixels — persisted to localStorage (range 12–64, default 16). */
   const fontSize = ref<number>(
     Number(localStorage.getItem("editor-font-size")) || 16,
   );
 
   function setFontSize(px: number): void {
-    const clamped = Math.max(12, Math.min(24, Math.round(px)));
+    const clamped = Math.max(12, Math.min(64, Math.round(px)));
     fontSize.value = clamped;
     localStorage.setItem("editor-font-size", String(clamped));
   }
 
   function adjustFontSize(delta: number): void {
-    setFontSize(fontSize.value + delta);
+    const v = fontSize.value;
+    // 24px 以下每步 1px；24px 以上步进 2px（向上 v≥24 生效，向下 v≥26 对称回退，
+    // 保证 24↔26 往返一致、不卡中间值；25 等奇数超过 24 后不可达，符合步进语义）
+    const step = (delta > 0 && v >= 24) || (delta < 0 && v >= 26) ? 2 : 1;
+    setFontSize(v + delta * step);
   }
 
   // ── Unicode 偏好（三期 B 组）──────────────────────────────────
@@ -88,12 +93,14 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   /**
-   * 三期 B 组（4-5/4-7）初始化统一变换：BOM+LF+NFC（必做）+ 可选全角→半角。
+   * 三期 B 组（4-5/4-7）初始化统一变换：BOM+LF+NFC（必做）+ 可选全角→半角
+   * + U+2029→\n（2026-08-05：IDML 段落分隔符在 CodeMirror 中不换行，编辑态
+   * 统一转 \n 保留换行换段；段文本长度不变（各 1 unit），装饰偏移零影响）。
    * 仅用于「进入编辑模式时的基线/初始 doc」——classifyEdit 运行期输入即输出，
    * 避免 segments 与 doc 长度不一致导致装饰偏移错位（见 unicode.ts 一致性约定）。
    */
   function applyNormalizations(text: string): string {
-    const t = normalizeText(text);
+    const t = normalizeParagraphs(normalizeText(text));
     return fullwidthHalfwidth.value ? normalizeFullwidth(t) : t;
   }
 
@@ -250,8 +257,12 @@ export const useEditorStore = defineStore("editor", () => {
         : buildBaselineStyles(compareStore.segments);
       // Pre-load draft data into editor state
       editSegments.value = cloneSegments(compareStore.segments);
-      editText.value = draft.editText;
-      originalBaseline.value = draft.baseline || localBaseline;
+      // 2026-08-05：旧草稿（保存于 U+2029 变换前）editText 为段落分隔符版，
+      // 统一经 applyNormalizations（幂等）变换为 \n 版，与 baseline 一致。
+      editText.value = applyNormalizations(draft.editText);
+      originalBaseline.value = draft.baseline
+        ? applyNormalizations(draft.baseline)
+        : localBaseline;
       hasEdits.value = true;
       cursorPos.value = draft.cursorPos ?? 0;
       scrollPos.value = draft.scrollPos ?? 0;
@@ -315,8 +326,11 @@ export const useEditorStore = defineStore("editor", () => {
       : compareStore.segments);
     // 草稿 editText 是保存时的原文（已是本会话变换后），不重变换；
     // 仅当 baseline 缺失时按当前偏好重建（三期 B 组）。
-    editText.value = draft.editText;
-    originalBaseline.value = draft.baseline || applyNormalizations(buildDocText(editSegments.value));
+    // 2026-08-05：旧草稿（U+2029 变换前保存）经 applyNormalizations（幂等）统一。
+    editText.value = applyNormalizations(draft.editText);
+    originalBaseline.value = draft.baseline
+      ? applyNormalizations(draft.baseline)
+      : applyNormalizations(buildDocText(editSegments.value));
     hasEdits.value = draft.hasEdits;
     cursorPos.value = draft.cursorPos ?? 0;
     scrollPos.value = draft.scrollPos ?? 0;
@@ -339,6 +353,57 @@ export const useEditorStore = defineStore("editor", () => {
     saveDraft();
     isEditing.value = false;
   }
+
+  /**
+   * 完成编辑：保存最终草稿 → 自动创建版本快照 → 清除草稿 → 退出编辑。
+   * 与 exitEdit（暂停编辑，草稿保留）的区别：完成后草稿从"未完成"列表移除，
+   * 编辑内容进入版本历史（按文件对分组）。
+   * 返回 true 表示成功创建版本，false 表示版本保存失败（草稿仍保留）。
+   */
+  async function completeEdit(): Promise<boolean> {
+    // 1. 先保存草稿（确保 IndexedDB/后端有最新数据）
+    saveDraft();
+    // flush 同步确保 worker 结果落盘
+    flushEditsSync();
+
+    // 2. 创建版本快照
+    const compareStore = useCompareStore();
+    const versionStore = useVersionStore();
+
+    const label = `编辑完成 ${new Date().toLocaleString()}`;
+    const savedId = await versionStore.saveVersion(
+      label,
+      buildOriginalText(compareStore.segments),
+      editText.value,
+      { ...compareStore.stats },
+      buildSideStyles(compareStore.segments, 'a'),
+      buildSideStyles(compareStore.segments, 'b'),
+      compareStore.meta?.docMeta as Record<string, unknown> | undefined,
+    );
+
+    if (!savedId) {
+      // 版本保存失败——草稿保留，用户可重试
+      return false;
+    }
+
+    // 3. 清除草稿（从"未完成"列表移除）
+    if (draftKey.value) {
+      storage.clearEditDraft(draftKey.value).catch(() => {});
+      api.autosave({ action: 'delete', key: draftKey.value }).catch(() => {});
+    }
+
+    // 4. 退出编辑态
+    isEditing.value = false;
+    hasEdits.value = false;
+    return true;
+  }
+
+  /** 全部变更项已处理完毕（用于触发完成提示）。 */
+  const allProcessed = computed(() => {
+    if (!isEditing.value) return false;
+    const total = editedStats.value.total;
+    return total > 0 && processedCis.value.length >= total;
+  });
 
   function resetToOriginal(): void {
     editSegments.value = cloneSegments(compareStore.segments);
@@ -411,9 +476,9 @@ export const useEditorStore = defineStore("editor", () => {
     draftKey, hasPendingDraft, pendingDraft, baselineStyle,
     workerSegments, workerVersion, setWorkerResult, draftUserSegments,
     registerFlush, flushEditsSync,
-    enterEdit, exitEdit, resetToOriginal, discardDraft, acceptDraft,
+    enterEdit, exitEdit, completeEdit, resetToOriginal, discardDraft, acceptDraft,
     resumeFromDraft,
     saveDraft, scheduleSave, updateCursorAndScroll, markProcessed,
-    getEditedSegments, editedStats, editedContexts,
+    getEditedSegments, editedStats, editedContexts, allProcessed,
   };
 });

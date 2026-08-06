@@ -27,11 +27,41 @@
 - 实现：后端 `src_backend/diff_engine.py`（_resolve_punct_substring/_resolve_punct_alignment/_resolve_whitespace）+ 前端 `src/render/unicode.ts`（resolvePunctSubstring/resolvePunctAlignment/resolveWhitespace）
 - 测试：后端 113 + 前端 122 全过；真实文件 mod 2341→44（Word 句读场景）
 
+## 大文档段落 LCS 流水线（2026-08-06 落地，497 卡死修复）
+- 触发：`max(len(A),len(B)) ≥ 150_000` 字符自动走 `diff_texts_para_lcs`，否则走全局 DMP（零改动）；校验失败回退全局 DMP
+- 流程：split_keep 切段（保留 U+2029 段尾）→ MD5 → 完整 DP LCS（格数上限 500 万）→ 替换组限长（总长 ≤4096 或单对 ≤2048 组内字符级 DMP，超限 coarse 段落级 DEL+ADD）→ 组内标点归因防线 L1→L2→L3→W（coarse 跳过）→ merge → 重建校验（B 严格相等，A 允许空白差异——W 隐藏孤立空白）
+- 实测：63 万字级 IDML 全链路 18.7s（原 147.7s），diff 3.7s（原 129.3s）；PAIR_DMP_MAX=2048 分支实际被 REGION 分支覆盖（死代码，保留与 bench 一致）
+- /api/compare 为同步 def（FastAPI 丢线程池防阻塞事件循环）；前端 COMPARE_TIMEOUT_MS=300s
+- 旧路径 Diff_Timeout 保持 0（fallback 场景不截断）；段落路径组内 DMP 超时 30s
+- 497 两版差异本质：重排重写型，125 处重写区段落级展示语义合理
+- **coarse 标点归因已修复（2026-08-06）**：coarse 分支新增 `_coarse_punct_alignment`（实词对齐检测 → 间隙对齐标点归因），实词相同则输出细粒度 DEL标点+EQ实词+ADD标点，实词不同保持段落级；497 实测 mod 120→22，total 6074→21886
+
+## 查看态渲染路线（2026-08-06 方案 A）
+- 大文档（scale M/L）+ 横排（txt/md）→ CodeMirrorDiff 只读 CM（虚拟行）
+- 大文档 + 竖排 IDML（docMeta.vertical）→ **UnifiedView/SplitView v-html 竖排**（CM6 不支持 vertical-rl；2026-08-06 修复前 497 查看模式横排的根因）
+- 关键坑：流式 push segments 期间 v-html 会每个 chunk 全量重算（63 万字=17.5MB HTML/24.4 万 DOM 节点）→ UnifiedView/SplitView 对"大文档竖排"gate `isComplete` 一次性渲染 + loading 占位 + watch isComplete 后初始化翻页 wheel
+- 跳转链路：竖排大文档走 ci-N DOM 锚点（Sidebar/ReportPage/search 已排除 CM 通道）；`compareStore.isVerticalIdml` 统一判定
+- 小文档 v-html 行为不变（流式边收边渲染，P5 特性保留）
+
 ## 后端基础设施
 - POST /api/autosave 已就绪（save/load/delete）
 - POST /api/versions/save + GET /api/versions/list + POST /api/versions/restore/{id}
 - AutosaveManager 文件存储 ./autosaves/，明文 JSON
 - autosave payload 已扩展：cursor_pos/scroll_pos/last_edit_offset/processed_cis/baseline/file_a_name/file_b_name
+- 版本历史按文件对分组（2026-08-06）：session_key = fnv1aHash(fileAName+fileBName+baseline)，save/list/_cleanup 均按 session_key 过滤/分组；每组保留 10 个版本
+
+## 搜索功能（2026-08-06 修复）
+- 查看态跳转：`<mark class="seg-search-hl" data-offset="N">` 精确定位，不再用偏移累加
+- `buildHighlightMap` 不再合并范围（每个 match 独立渲染 data-offset）
+- `search.ts` 新增 `jumpTo(index)` 方法；`SearchBar.vue` 增加结果列表（前 50 条）
+- `search()` 后 `nextTick(scrollToActiveMatch)` 自动跳到第一个匹配
+
+## 完成编辑功能（2026-08-06）
+- `editor.ts` 新增 `completeEdit()`：saveDraft → flushEditsSync → 保存版本快照 → 清除草稿 → isEditing=false
+- `editor.ts` 新增 `allProcessed` computed（processedCis.length >= editedStats.total）
+- `ReportPage.vue` watch allProcessed → confirm → handleComplete
+- `Toolbar.vue` 新增"✓ 完成"按钮（绿色），emit `complete` 事件
+- 草稿 vs 版本：草稿=进行中（覆盖更新，同一对文件一份），版本=已完成快照（按文件对分组）
 
 ## 编辑会话持久化（2026-08-04 一期+二期完成）
 - 草稿 key：FNV-1a hash(fileAName+fileBName+baseline 文本) — compareStore 无原始内容，baseline 等价识别

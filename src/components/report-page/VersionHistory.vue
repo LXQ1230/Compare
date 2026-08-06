@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useVersionStore } from '../../stores/version';
 import { useCompareStore } from '../../stores/compare';
@@ -11,28 +12,30 @@ const compareStore = useCompareStore();
 
 const emit = defineEmits<{ close: [] }>();
 
-/** 保存当前对比会话（A 原文 vs B 修改版全文）为版本（方案 P1-1b）。
- * IDML：两侧样式随版本存储（方案 §6.6 链路 1，恢复时回填）。 */
+onMounted(() => {
+  void versionStore.loadVersions();
+});
+
+/** 保存当前对比会话（A 原文 vs B 修改版全文）为版本。
+ * session_key 自动计算（与草稿 key 一致），版本历史按文件对分组。 */
 async function onSave() {
   const label = prompt('版本标签（可选）：') ?? '';
   const key = label || `v${new Date().toLocaleString()}`;
   const saved = await versionStore.saveVersion(
     key,
-    buildOriginalText(compareStore.segments), // A 侧原文
-    buildDocText(compareStore.segments),      // B 侧修改版全文（过滤 phantom）
+    buildOriginalText(compareStore.segments),
+    buildDocText(compareStore.segments),
     { ...compareStore.stats },
-    buildSideStyles(compareStore.segments, 'a'), // styleA（§6.6 链路 1）
-    buildSideStyles(compareStore.segments, 'b'), // styleB
-    compareStore.meta?.docMeta as Record<string, unknown> | undefined, // 竖排元数据
+    buildSideStyles(compareStore.segments, 'a'),
+    buildSideStyles(compareStore.segments, 'b'),
+    compareStore.meta?.docMeta as Record<string, unknown> | undefined,
   );
   if (saved) {
-    // 提示保存成功（后端 id 已入列表，无需刷新）
     window.alert(`版本「${key}」已保存。`);
   }
 }
 
-/** 恢复 = 把该版本的 A/B 全文变成新的对比会话（方案 P1-1c），
- * IDML 版本回滚后排版呈现不退化（§6.6 链路 1：style + docMeta 回填）。 */
+/** 恢复 = 把该版本的 A/B 全文变成新的对比会话。 */
 async function onRestore(v: VersionEntry): Promise<void> {
   const res = await versionStore.restoreVersion(v.id);
   if (res) {

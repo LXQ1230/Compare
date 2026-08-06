@@ -9,7 +9,7 @@ import { useCompareStore } from "../../stores/compare";
 import { useEditorStore } from "../../stores/editor";
 import { useSearchStore } from "../../stores/search";
 import { classifyEdit, isPhantomSegment, buildDocText, normalizeLineEndings, docOffsetsOf } from "../../render/editClassifier";
-import { normalizeText } from "../../render/unicode";
+import { normalizeText, normalizeParagraphs } from "../../render/unicode";
 import { mergeSegments } from "../../render/incrementalClassify";
 import { buildBToAMap, detectRestores, type BToAMap } from "../../render/restoreDetector";
 import { classifyInWorker, resetWorkerSession } from "../../utils/classifyWorker";
@@ -36,7 +36,9 @@ const invisibleCompartment = new Compartment();
 const INVISIBLE_EXTRA = /[\u00A0\u200B-\u200F\uFEFF]/g;
 const isViewCM = computed(
   () => !editorStore.isEditing
-    && (compareStore.meta?.scale === "M" || compareStore.meta?.scale === "L"),
+    && (compareStore.meta?.scale === "M" || compareStore.meta?.scale === "L")
+    // 竖排 IDML 大文档查看态走 v-html（UnifiedView/SplitView），CM 不支持竖排
+    && !compareStore.isVerticalIdml,
 );
 
 let view: EditorView | null = null;
@@ -344,7 +346,8 @@ function restoreDiffLayer(): void {
 
 // ── IDML 排版样式层（方案 §6.2：第 3 层 Decoration，只读不参与编辑语义）──
 
-/** 编辑态内联样式：字号/字体/粗体/颜色；割注按割注字号小字内联（§6.2）。 */
+/** 编辑态内联样式：字号/字体/粗体；割注按割注字号小字内联（§6.2）。
+ *  sp.color 不输出：IDML 校勘标注色（如 #D90000）不应覆盖 diff/user 高亮色。 */
 function styleDecoCss(sp: StyleRange): string {
   const parts: string[] = [];
   if (sp.font) parts.push(`font-family:'${sp.font}',serif`);
@@ -354,7 +357,6 @@ function styleDecoCss(sp: StyleRange): string {
     parts.push(`font-size:${sp.sizePt}pt`);
   }
   if (sp.bold) parts.push('font-weight:700');
-  if (sp.color) parts.push(`color:${sp.color}`);
   return parts.join(';');
 }
 
@@ -613,8 +615,11 @@ function ensureEditor() {
     ? editorStore.editSegments
     : compareStore.segments;
   // 三期 B 组（4-5/4-7）：编辑态优先用 store 已变换的 originalBaseline
-  // （enterEdit 统一 BOM+LF+NFC+可选全角）；查看态用基础 normalizeText。
-  baseline = editorStore.originalBaseline || normalizeText(buildDocText(segs));
+  // （enterEdit 统一 BOM+LF+NFC+可选全角+U+2029→\n）；查看态用基础
+  // normalizeText + U+2029→\n（2026-08-05：CM 只认 \n 为换行，段落符保留
+  // 会导致大文档查看态段落粘连成一行）。
+  baseline = editorStore.originalBaseline
+    || normalizeParagraphs(normalizeText(buildDocText(segs)));
   cachedDocFingerprint = baseline;
   // Rev. edit-persistence: when resuming a draft, the edited text differs
   // from the baseline — use it as the initial doc instead of clobbering it.
@@ -995,8 +1000,10 @@ watch(
     const segs = editorStore.editSegments.length > 0
       ? editorStore.editSegments
       : compareStore.segments;
-    // 三期 B 组（4-5）：与 ensureEditor 同源（编辑态用 store 已变换值）
-    const freshBaseline = editorStore.originalBaseline || normalizeText(buildDocText(segs));
+    // 三期 B 组（4-5）：与 ensureEditor 同源（编辑态用 store 已变换值；
+    // U+2029→\n 见 ensureEditor 注释）
+    const freshBaseline = editorStore.originalBaseline
+      || normalizeParagraphs(normalizeText(buildDocText(segs)));
     // Rev. C3 guard: a NEW comparison produces different baseline text.
     // The cached view cannot be reused (its doc/history belong to the old
     // document), so tear it down and rebuild from scratch.

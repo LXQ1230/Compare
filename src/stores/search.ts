@@ -3,7 +3,7 @@
  */
 
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import type { SearchMatch } from '@/utils/search';
 import { searchInSegments, type SearchOptions } from '@/utils/search';
 import { useCompareStore } from './compare';
@@ -53,19 +53,30 @@ export const useSearchStore = defineStore('search', () => {
       : compareStore.segments;
     matches.value = searchInSegments(source, query.value, options.value);
     activeMatchIndex.value = matches.value.length > 0 ? 0 : -1;
+    // Auto-scroll to first match after DOM updates (renders search highlights).
+    if (activeMatchIndex.value >= 0) {
+      nextTick(() => scrollToActiveMatch());
+    }
   }
 
   function next(): void {
     if (matches.value.length === 0) return;
     activeMatchIndex.value = (activeMatchIndex.value + 1) % matches.value.length;
-    scrollToActiveMatch();
+    nextTick(() => scrollToActiveMatch());
   }
 
   function prev(): void {
     if (matches.value.length === 0) return;
     activeMatchIndex.value =
       (activeMatchIndex.value - 1 + matches.value.length) % matches.value.length;
-    scrollToActiveMatch();
+    nextTick(() => scrollToActiveMatch());
+  }
+
+  /** Jump to a specific match by index (for clicking search result list). */
+  function jumpTo(index: number): void {
+    if (index < 0 || index >= matches.value.length) return;
+    activeMatchIndex.value = index;
+    nextTick(() => scrollToActiveMatch());
   }
 
   /** Scroll the active search match into view and flash it. */
@@ -74,7 +85,7 @@ export const useSearchStore = defineStore('search', () => {
     if (!m) return;
     const editorStore = useEditorStore();
     if (editorStore.isEditing) {
-      // 方案 P2-2: 编辑态无 ci-N DOM 锚点（CM 替代渲染），走 CM 通道——
+      // 编辑态：CM 替代渲染，走 CM 通道——
       // 偏移 = editedSegments（与 buildSearchDecos 同源）累计 doc 偏移 + 段内 offset。
       const segs = editorStore.getEditedSegments();
       if (m.segmentIndex < 0 || m.segmentIndex >= segs.length) return;
@@ -85,7 +96,7 @@ export const useSearchStore = defineStore('search', () => {
       host?.__cmScrollToSearchOffset?.(offsets[m.segmentIndex] + m.textOffset);
       return;
     }
-    // Find the parent <mark data-ci> containing this match's segment
+    // 查看态：通过 data-offset 属性精确定位 <mark>，不再用脆弱的偏移累加。
     const compareStore = useCompareStore();
     const segments = compareStore.segments;
     const idx = m.segmentIndex;
@@ -93,27 +104,26 @@ export const useSearchStore = defineStore('search', () => {
     const ci = segments[idx].ci;
     if (ci == null) return;
     const el = document.getElementById(`ci-${ci}`);
-    if (!el) return;
-    // Find our specific <mark class="seg-search-hl"> inside
-    const hls = el.querySelectorAll<HTMLElement>('.seg-search-hl');
-    if (hls.length === 0) return;
-    // Determine which search-hl mark corresponds to this match by position
-    // Build an array of {hl, offset} then pick the one matching this match's textOffset
-    let cumulativeOffset = 0;
-    for (const hl of hls) {
-      const textLen = (hl.textContent ?? '').length;
-      if (
-        cumulativeOffset <= m.textOffset &&
-        m.textOffset < cumulativeOffset + textLen
-      ) {
-        hl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        const allHls = document.querySelectorAll('.seg-search-hl.current');
-        allHls.forEach((h) => h.classList.remove('current'));
-        hl.classList.add('current');
-        return;
+    if (!el) {
+      // 段无 ci（operation='none'）——搜索匹配在普通文本段，直接按 data-offset 全局查找
+      const globalHl = document.querySelector<HTMLElement>(
+        `.seg-search-hl[data-offset="${m.textOffset}"]`,
+      );
+      if (globalHl) {
+        globalHl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        document.querySelectorAll('.seg-search-hl.current').forEach((h) => h.classList.remove('current'));
+        globalHl.classList.add('current');
       }
-      cumulativeOffset += textLen;
+      return;
     }
+    // 在段容器内精确查找 data-offset 匹配的 <mark>
+    const hl = el.querySelector<HTMLElement>(
+      `.seg-search-hl[data-offset="${m.textOffset}"]`,
+    );
+    if (!hl) return;
+    hl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.querySelectorAll('.seg-search-hl.current').forEach((h) => h.classList.remove('current'));
+    hl.classList.add('current');
   }
 
   function toggleCaseSensitive(): void {
@@ -131,5 +141,5 @@ export const useSearchStore = defineStore('search', () => {
     search();
   }
 
-  return { isOpen, query, options, matches, activeMatchIndex, activeMatch, totalMatches, currentPosition, toggle, open, close, search, next, prev, toggleCaseSensitive, toggleWholeWord, toggleRegex };
+  return { isOpen, query, options, matches, activeMatchIndex, activeMatch, totalMatches, currentPosition, toggle, open, close, search, next, prev, jumpTo, toggleCaseSensitive, toggleWholeWord, toggleRegex };
 });

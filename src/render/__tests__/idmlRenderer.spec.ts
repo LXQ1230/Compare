@@ -74,7 +74,7 @@ describe('Warichu 折行（§6.3）', () => {
 })
 
 describe('字符样式映射（§6.1）', () => {
-  it('font/size/bold/color/baselineShift → CSS', () => {
+  it('font/size/bold/baselineShift → CSS（color 不输出，2026-08-06）', () => {
     const s = seg('AB', [{
       start: 0, end: 1,
       font: 'FangSong', sizePt: 20, bold: true, color: '#C00000',
@@ -83,7 +83,8 @@ describe('字符样式映射（§6.1）', () => {
     expect(html).toContain("font-family:'FangSong',serif")
     expect(html).toContain('font-size:20pt')
     expect(html).toContain('font-weight:700')
-    expect(html).toContain('color:#C00000')
+    // color 不输出为行内 CSS——IDML 校勘色不覆盖 diff 高亮色
+    expect(html).not.toContain('color:#C00000')
   })
 
   it('baselineShift -9.2 → top:9.2pt（悬挂句号，§6.1）', () => {
@@ -130,11 +131,71 @@ describe('非 IDML 零影响（§4.2）', () => {
   })
 })
 
+describe('样式边界标点剥离（2026-08-05 竖排重叠修复）', () => {
+  it('普通 style span 尾部标点移出（裸文本，不留在 span 边界）', () => {
+    const s = seg('如是我聞。', [{ start: 0, end: 5, font: 'SourceHanSerifCN' }])
+    const html = renderSegmentsToHTML([s])
+    expect(html).toContain("font-family:'SourceHanSerifCN',serif\">如是我聞</span>。")
+  })
+
+  it('纯标点 span（无特殊样式）→ 整段丢弃为裸文本', () => {
+    const s = seg('。', [{ start: 0, end: 1, font: 'SourceHanSerifCN' }])
+    const html = renderSegmentsToHTML([s])
+    expect(html).not.toContain('font-family')
+    expect(html).toContain('>。</span>')
+  })
+
+  it('style 切分在标点处：标点不留在任一 span 边界', () => {
+    // 佛(0)說(1)阿(2)彌(3)陀(4)經(5)。(6)
+    const s = seg('佛說阿彌陀經。', [
+      { start: 0, end: 2, font: 'FangSong' },
+      { start: 2, end: 6, font: 'SourceHanSerifCN', warichu: true, warichuSize: 40 },
+      { start: 6, end: 7, font: 'FangSong' }, // 纯标点 span → 剥离
+    ])
+    const html = renderSegmentsToHTML([s])
+    expect(html).toContain("font-family:'FangSong',serif\">佛說</span>")
+    expect(html).toContain('warichu-col">阿彌陀經<')
+    expect(html).toContain('>。</span>')
+  })
+
+  it('warichu span 不参与剥离（双列折行是整体排版单元）', () => {
+    const text = '此八字。依漢吳二譯增'
+    const s = seg(text, [{
+      start: 0, end: text.length, font: 'SourceHanSerifCN',
+      warichu: true, warichuSize: 40,
+    }])
+    const html = renderSegmentsToHTML([s])
+    expect(html).toContain('warichu-col')
+  })
+
+  it('baselineShift 标点 span 保留（悬挂句号样式不丢）', () => {
+    const s = seg('。', [{ start: 0, end: 1, baselineShift: -9.2 }])
+    const html = renderSegmentsToHTML([s])
+    expect(html).toContain('top:9.2pt')
+  })
+
+  it('color 标点 span 不输出行内 color（2026-08-06：diff 高亮优先）', () => {
+    const s = seg('。', [{ start: 0, end: 1, color: '#C00000' }])
+    const html = renderSegmentsToHTML([s])
+    // color 不再输出为行内 CSS，diff 高亮色（seg-none 等）优先
+    expect(html).not.toContain('color:#C00000')
+    expect(html).toContain('seg-none')
+  })
+})
+
 describe('竖排容器样式（§6.4）', () => {
   it('vertical + leadingRatio → writing-mode + line-height', () => {
     const css = getDocContainerStyle({ vertical: true, leadingRatio: 1.536 })
     expect(css).toContain('writing-mode:vertical-rl')
     expect(css).toContain('line-height:1.536')
+  })
+
+  it('IDML 容器注入正文字号 28pt（2026-08-05：15px 触发竖排标点 bug）', () => {
+    const css = getDocContainerStyle({ vertical: true, leadingRatio: 1.536 })
+    expect(css).toContain('font-size:28pt')
+    // 横排 IDML 同样注入（meta 存在即 IDML）
+    const h = getDocContainerStyle({ vertical: false, leadingRatio: 1.5 })
+    expect(h).toContain('font-size:28pt')
   })
 })
 

@@ -8,25 +8,25 @@
  * When `searchMatches` is provided, matched substrings are wrapped in
  * `<mark class="seg-search-hl">` tags inside the segment text.
  *
- * IDML ÅÅ°æ¼¶³ÊÏÖ£¨·½°¸ docs/IDMLÖ§³ÖÉè¼Æ·½°¸-2026-08-05.md£©£º
- *  - Segment.style£¨StyleRange[]£¬¿ÉÑ¡£©¡ú ×Ö·û¼¶ font/size/bold/color/baselineShift
- *  - Warichu ¸î×¢£¨¡ì6.3£©¡ú Ë«ÁĞĞ¡×ÖÕÛĞĞ£¨ÁĞÈİÁ¿ COL_CAPACITY_DEFAULT=7£¬ÃªµãĞ£×¼£©
- *  - U+2029 ¶ÎÂä·Ö¸ô·û£¨¡ì6.5£©¡ú <br class="para-break">£¨ÊúÅÅ=ÁíÆğÒ»ÁĞ/ºáÅÅ=»»ĞĞ£©
- *  - ÊúÅÅÈİÆ÷ÑùÊ½ÓÉ getDocContainerStyle() Ìá¹©£¨ÊÓÍ¼²ãÓ¦ÓÃ£¬¡ì6.4£©
- *  - ·Ç IDML£¨ÎŞ style / ÎŞ docMeta£©¡ú ĞĞÎªÓëÔ­ÏÈÍêÈ«Ò»ÖÂ£¨Áã¿ªÏú£©
+ * IDML æ’ç‰ˆçº§å‘ˆç°ï¼ˆæ–¹æ¡ˆ docs/IDMLæ”¯æŒè®¾è®¡æ–¹æ¡ˆ-2026-08-05.mdï¼‰ï¼š
+ *  - Segment.styleï¼ˆStyleRange[]ï¼Œå¯é€‰ï¼‰â†’ å­—ç¬¦çº§ font/size/bold/color/baselineShift
+ *  - Warichu å‰²æ³¨ï¼ˆÂ§6.3ï¼‰â†’ åŒåˆ—å°å­—æŠ˜è¡Œï¼ˆåˆ—å®¹é‡ COL_CAPACITY_DEFAULT=7ï¼Œé”šç‚¹æ ¡å‡†ï¼‰
+ *  - U+2029 æ®µè½åˆ†éš”ç¬¦ï¼ˆÂ§6.5ï¼‰â†’ <br class="para-break">ï¼ˆç«–æ’=å¦èµ·ä¸€åˆ—/æ¨ªæ’=æ¢è¡Œï¼‰
+ *  - ç«–æ’å®¹å™¨æ ·å¼ç”± getDocContainerStyle() æä¾›ï¼ˆè§†å›¾å±‚åº”ç”¨ï¼ŒÂ§6.4ï¼‰
+ *  - é IDMLï¼ˆæ—  style / æ—  docMetaï¼‰â†’ è¡Œä¸ºä¸åŸå…ˆå®Œå…¨ä¸€è‡´ï¼ˆé›¶å¼€é”€ï¼‰
  */
 
 import type { SearchMatch } from '../utils/search';
 import type { DocMeta, Segment, StyleRange } from '@/types';
 
-/** ¶ÎÂä·Ö¸ô·û£¨ºó¶Ë idml_parser.PARA_SEP£¬·½°¸ ¡ì5.7.1£© */
+/** æ®µè½åˆ†éš”ç¬¦ï¼ˆåç«¯ idml_parser.PARA_SEPï¼Œæ–¹æ¡ˆ Â§5.7.1ï¼‰ */
 export const PARA_SEP = '\u2029'
 
-/** ¸î×¢ÁĞÈİÁ¿¶µµ×³£Á¿£¨¡ì6.3£ºÒ³5=7 ×ÖÃªµã£»Ò³6=5 ÊÜĞĞ¸ßÔ¼Êø£¬±¾ÆÚĞ§¹û¼¶½üËÆ£© */
+/** å‰²æ³¨åˆ—å®¹é‡å…œåº•å¸¸é‡ï¼ˆÂ§6.3ï¼šé¡µ5=7 å­—é”šç‚¹ï¼›é¡µ6=5 å—è¡Œé«˜çº¦æŸï¼Œæœ¬æœŸæ•ˆæœçº§è¿‘ä¼¼ï¼‰ */
 export const COL_CAPACITY_DEFAULT = 7
 
 export interface RenderOptions {
-  /** ÊúÅÅÎÄµµ£¨IDML StoryOrientation="Vertical"£¬¡ì6.4£© */
+  /** ç«–æ’æ–‡æ¡£ï¼ˆIDML StoryOrientation="Vertical"ï¼ŒÂ§6.4ï¼‰ */
   vertical?: boolean
 }
 
@@ -45,7 +45,7 @@ function esc(s: string): string {
 }
 
 function segmentClass(s: Segment): string {
-  // ÈıÆÚ A ×é£º»Ö¸´¶ÎÍ³Ò»ÂÌÉ«£¨ÒÑ»Øµ½Ô­ÎÄ£©
+  // ä¸‰æœŸ A ç»„ï¼šæ¢å¤æ®µç»Ÿä¸€ç»¿è‰²ï¼ˆå·²å›åˆ°åŸæ–‡ï¼‰
   if (s.origin === 'restored') return 'seg-user-restored';
   if (s.origin === 'user') {
     if (s.operation === 'add') return 'seg-user-add';
@@ -65,7 +65,14 @@ function segmentClass(s: Segment): string {
   }
 }
 
-/** Escape and inject <mark class="seg-search-hl"> for highlight ranges. */
+/**
+ * Escape and inject <mark class="seg-search-hl" data-offset="N"> for highlight ranges.
+ * data-offset carries the match's textOffset within the segment, so search
+ * navigation can locate the exact <mark> without fragile cumulative-offset
+ * arithmetic. Multiple matches in one segment produce multiple <mark> elements
+ * (no merging) â€” this is safe because matches from regex search are
+ * non-overlapping by construction (exec advances lastIndex past each match).
+ */
 function escWithHighlights(
   text: string,
   ranges: Array<{ start: number; end: number }>,
@@ -74,7 +81,7 @@ function escWithHighlights(
   let pos = 0;
   for (const r of ranges) {
     if (r.start > pos) out += esc(text.slice(pos, r.start));
-    out += `<mark class="seg-search-hl">${esc(text.slice(r.start, r.end))}</mark>`;
+    out += `<mark class="seg-search-hl" data-offset="${r.start}">${esc(text.slice(r.start, r.end))}</mark>`;
     pos = r.end;
   }
   if (pos < text.length) out += esc(text.slice(pos));
@@ -82,8 +89,12 @@ function escWithHighlights(
 }
 
 /**
- * Build a Map<segmentIndex, merged highlight ranges> from SearchMatch[].
- * Overlapping/adjacent ranges are merged so nested <mark> tags are avoided.
+ * Build a Map<segmentIndex, highlight ranges> from SearchMatch[].
+ * Ranges are sorted by start offset but NOT merged â€” each range keeps its
+ * original start so the rendered <mark data-offset="N"> can be located
+ * by the search navigation logic. Overlapping ranges are extremely rare
+ * (only from zero-width regex like `a*`); if they occur, the browser
+ * renders nested marks, which is visually harmless.
  */
 function buildHighlightMap(
   matches: SearchMatch[],
@@ -96,44 +107,74 @@ function buildHighlightMap(
   }
   for (const ranges of bySegment.values()) {
     ranges.sort((a, b) => a.start - b.start);
-    const merged: typeof ranges = [];
-    for (const r of ranges) {
-      const prev = merged[merged.length - 1];
-      if (prev && r.start <= prev.end) {
-        prev.end = Math.max(prev.end, r.end);
-      } else {
-        merged.push({ start: r.start, end: r.end });
-      }
-    }
-    ranges.length = 0;
-    ranges.push(...merged);
   }
   return bySegment;
 }
 
-// ©¤©¤ IDML ÅÅ°æäÖÈ¾£¨·½°¸ ¡ì6.1/¡ì6.3/¡ì6.5£©©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤
+// â”€â”€ IDML æ’ç‰ˆæ¸²æŸ“ï¼ˆæ–¹æ¡ˆ Â§6.1/Â§6.3/Â§6.5ï¼‰â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/** U+2029 ¡ú ¶ÎÂä¼¶»»ĞĞ±ê¼Ç£¨¡ì6.5£º²»ÒÀÀµ white-space:pre-wrap Ä¬ÈÏĞĞÎª£©¡£ */
+/** æ ‡ç‚¹å­—ç¬¦é›†ï¼ˆä¸ unicode.ts PUNCT_CHARS / åç«¯ _PUNCT_CHARS å¯¹é½ï¼‰ã€‚ */
+const PUNCT_RE = /[ã€‚ï¼ï¼Ÿï¼›ï¼šï¼Œã€â€¦â€”ï½ã€Œã€ã€ã€ï¼ˆï¼‰ã€Šã€‹ã€ˆã€‰ã€ã€‘ã€”ã€•ï½›ï½Â·,.;:!?â€¦~"'()\[\]{}]/;
+
+function isPunctChar(ch: string): boolean {
+  return PUNCT_RE.test(ch);
+}
+
+/** U+2029 â†’ æ®µè½çº§æ¢è¡Œæ ‡è®°ï¼ˆÂ§6.5ï¼šä¸ä¾èµ– white-space:pre-wrap é»˜è®¤è¡Œä¸ºï¼‰ã€‚ */
 function paraBreaks(text: string): string {
   return text.split(PARA_SEP).join('<br class="para-break">');
 }
 
-/** ×Ö·ûÑùÊ½ ¡ú CSS£¨¡ì6.1£»baselineShift -9.2 ¡ú top:9.2pt Ğü¹Ò£©¡£ */
+/**
+ * æ ·å¼è¾¹ç•Œæ ‡ç‚¹å‰¥ç¦»ï¼ˆ2026-08-05 ç«–æ’é‡å æ ¹å› ä¿®å¤ï¼ŒÂ§6.1 å¢è¡¥ï¼‰ï¼š
+ *
+ * å®è¯ï¼šç«–æ’ï¼ˆvertical-rlï¼‰+ å°å­—å·ä¸‹ï¼ŒChrome å¯¹ã€Œä½äºå…ƒç´ è¾¹ç•Œã€çš„ U+3002ï¼ˆã€‚ï¼‰ç­‰
+ * æ ‡ç‚¹çš„è¡Œé«˜ advance è®¡ç®—é”™è¯¯ï¼ˆâ‰ˆ4pxï¼Œæ­£å¸¸ 1emï¼‰ï¼Œå¯¼è‡´æ ‡ç‚¹ä¸åå­—é‡å  12px
+ * ï¼ˆ275 æ–‡ä»¶ 183/191 å¤„ï¼‰ã€‚æ ‡ç‚¹ä½äºè£¸æ–‡æœ¬èŠ‚ç‚¹ï¼ˆæ—  style span åŒ…è£¹ï¼‰æ—¶æ­£å¸¸ã€‚
+ *
+ * è§„åˆ™ï¼šå¯¹ã€Œæ— ç‰¹æ®Šæ ·å¼ã€çš„ style åŒºé—´ï¼ˆä»… font æˆ–å…¨é»˜è®¤ï¼‰ï¼ŒæŠŠå¤´éƒ¨/å°¾éƒ¨æ ‡ç‚¹
+ * ç§»å‡ºåŒºé—´ï¼ˆæ¸²æŸ“ä¸ºè£¸æ–‡æœ¬ï¼‰ï¼Œæ¶ˆé™¤ã€Œæ ‡ç‚¹åœ¨ span è¾¹ç•Œã€çš„è§¦å‘æ¡ä»¶ã€‚
+ * ä¿ç•™åŒºé—´ï¼šwarichuï¼ˆåŒåˆ—æŠ˜è¡Œæ˜¯æ•´ä½“æ’ç‰ˆå•å…ƒï¼‰ã€bold/color/sizePt/baselineShift
+ * ï¼ˆæ ‡ç‚¹æºå¸¦çœŸå®è¯­ä¹‰æ ·å¼ï¼Œå¦‚æ ¡å‹˜çº¢/æ‚¬æŒ‚ï¼Œä¸å¯ä¸¢å¼ƒâ€”â€”çœŸå® IDML ä¸­æ­¤ç±»æ ‡ç‚¹æå°‘ï¼Œ
+ * æ½œåœ¨é‡å é‡å°ï¼‰ã€‚
+ */
+function resolveStyleBoundaries(text: string, style: StyleRange[]): StyleRange[] {
+  if (!style || style.length === 0) return style;
+  // sp.color ä¸è®¡å…¥ hasSpecialStyleï¼šIDML æ ¡å‹˜æ ‡æ³¨è‰²ï¼ˆå¦‚ #D90000 å¥å·ï¼‰
+  // ä¸è¾“å‡ºä¸ºè¡Œå†… colorï¼Œä½¿ diff é«˜äº®è‰²ï¼ˆseg-del/seg-mod-old ç­‰ï¼‰ä¼˜å…ˆã€‚
+  const hasSpecialStyle = (sp: StyleRange): boolean =>
+    !!(sp.bold || sp.sizePt || sp.baselineShift || sp.warichu);
+  const out: StyleRange[] = [];
+  for (const sp of style) {
+    if (hasSpecialStyle(sp)) {
+      out.push(sp);
+      continue;
+    }
+    let s = sp.start;
+    let e = sp.end;
+    while (s < e && isPunctChar(text[s])) s++;
+    while (e > s && isPunctChar(text[e - 1])) e--;
+    if (e > s) out.push({ ...sp, start: s, end: e });
+  }
+  return out;
+}
+
+/** å­—ç¬¦æ ·å¼ â†’ CSSï¼ˆÂ§6.1ï¼›baselineShift -9.2 â†’ top:9.2pt æ‚¬æŒ‚ï¼‰ã€‚
+ *  sp.color ä¸è¾“å‡ºï¼šIDML æ ¡å‹˜æ ‡æ³¨è‰²ï¼ˆå¦‚ #D90000ï¼‰ä¸åº”è¦†ç›– diff é«˜äº®è‰²ã€‚ */
 function styleCss(sp: StyleRange): string {
   const parts: string[] = [];
   if (sp.font) parts.push(`font-family:'${sp.font}',serif`);
   if (sp.sizePt) parts.push(`font-size:${sp.sizePt}pt`);
   if (sp.bold) parts.push('font-weight:700');
-  if (sp.color) parts.push(`color:${sp.color}`);
   if (sp.baselineShift) parts.push(`position:relative;top:${-sp.baselineShift}pt`);
   return parts.join(';');
 }
 
 /**
- * Warichu ¸î×¢ÕÛĞĞ£¨¡ì6.3£¬ÊµÖ¤Çı¶¯£©£º
- * ¸î×¢×ÖºÅ = sizePt ¡Á warichuSize/100£»Ã¿ÁĞÈİÁ¿ floor(ĞĞ¸ß/¸î×¢×ÖºÅ)£¬
- * ±¾ÆÚÓÃ¶µµ×³£Á¿ 7£¨Ò³5=7 Ãªµã£©£¬Ò³6=5 µÄ²îÒìÁô´ı¸ü¶à PDF ÑùÀıĞ£×¼¡£
- * ÊúÅÅ£ºÓÒÁĞ + ×óÁĞÒ»×é£»Òç³ö¿ªĞÂÁĞ×é£¨¿çĞĞĞøÅÅ£©¡£ºáÅÅ£ºÁĞ×ªºáÏòĞĞÉÏÏÂµş·Å¡£
+ * Warichu å‰²æ³¨æŠ˜è¡Œï¼ˆÂ§6.3ï¼Œå®è¯é©±åŠ¨ï¼‰ï¼š
+ * å‰²æ³¨å­—å· = sizePt Ã— warichuSize/100ï¼›æ¯åˆ—å®¹é‡ floor(è¡Œé«˜/å‰²æ³¨å­—å·)ï¼Œ
+ * æœ¬æœŸç”¨å…œåº•å¸¸é‡ 7ï¼ˆé¡µ5=7 é”šç‚¹ï¼‰ï¼Œé¡µ6=5 çš„å·®å¼‚ç•™å¾…æ›´å¤š PDF æ ·ä¾‹æ ¡å‡†ã€‚
+ * ç«–æ’ï¼šå³åˆ— + å·¦åˆ—ä¸€ç»„ï¼›æº¢å‡ºå¼€æ–°åˆ—ç»„ï¼ˆè·¨è¡Œç»­æ’ï¼‰ã€‚æ¨ªæ’ï¼šåˆ—è½¬æ¨ªå‘è¡Œä¸Šä¸‹å æ”¾ã€‚
  */
 function renderWarichu(
   text: string,
@@ -143,7 +184,7 @@ function renderWarichu(
 ): string {
   const fs = sizePt * warichuSize / 100
   const colCap = COL_CAPACITY_DEFAULT
-  // ¸î×¢ÄÚ¶ÎÂä±ß½ç£¨º±¼û£©£º·Ö¶ÎÕÛĞĞ£¬¶Î¼ä¶ÎÂä±ê¼Ç
+  // å‰²æ³¨å†…æ®µè½è¾¹ç•Œï¼ˆç½•è§ï¼‰ï¼šåˆ†æ®µæŠ˜è¡Œï¼Œæ®µé—´æ®µè½æ ‡è®°
   const groups: string[] = []
   const paras = text.split(PARA_SEP)
   paras.forEach((para, pi) => {
@@ -164,8 +205,8 @@ function renderWarichu(
 }
 
 /**
- * äÖÈ¾Ò»¶Î´øÑùÊ½µÄÎÄ±¾£¨style Çø¼äÇĞ·Ö + Warichu + ËÑË÷¸ßÁÁ + ¶ÎÂä±ê¼Ç£©¡£
- * ranges Îª segment È«ÎÄÆ«ÒÆµÄËÑË÷¸ßÁÁ£»style Îª segment ÄÚÆ«ÒÆ£¨¡ì4.2£©¡£
+ * æ¸²æŸ“ä¸€æ®µå¸¦æ ·å¼çš„æ–‡æœ¬ï¼ˆstyle åŒºé—´åˆ‡åˆ† + Warichu + æœç´¢é«˜äº® + æ®µè½æ ‡è®°ï¼‰ã€‚
+ * ranges ä¸º segment å…¨æ–‡åç§»çš„æœç´¢é«˜äº®ï¼›style ä¸º segment å†…åç§»ï¼ˆÂ§4.2ï¼‰ã€‚
  */
 export function renderStyledText(
   text: string,
@@ -174,17 +215,20 @@ export function renderStyledText(
   vertical: boolean,
 ): string {
   if (!style || style.length === 0) {
-    // ·Ç IDML »òÑùÊ½È«Ä¬ÈÏ£ºÔ­Âß¼­ + ¶ÎÂä±ê¼Ç
+    // é IDML æˆ–æ ·å¼å…¨é»˜è®¤ï¼šåŸé€»è¾‘ + æ®µè½æ ‡è®°
     const html = ranges?.length ? escWithHighlights(text, ranges) : esc(text)
     return paraBreaks(html)
   }
+
+  // 2026-08-05ï¼šç«–æ’æ ‡ç‚¹é‡å æ ¹å› ä¿®å¤â€”â€”æ ‡ç‚¹ä¸ç•™åœ¨æ™®é€š style span è¾¹ç•Œ
+  const styleAdj = resolveStyleBoundaries(text, style)
 
   const out: string[] = []
   let pos = 0
   const emit = (sp: StyleRange | null, s: number, e: number) => {
     if (e <= s) return
     const segText = text.slice(s, e)
-    // ËÑË÷¸ßÁÁ²Ã¼ôµ½±¾¶Î£¨Ïà¶ÔÆ«ÒÆ£©
+    // æœç´¢é«˜äº®è£å‰ªåˆ°æœ¬æ®µï¼ˆç›¸å¯¹åç§»ï¼‰
     const subRanges = ranges
       ? ranges
           .filter((r) => r.start < e && r.end > s)
@@ -202,7 +246,7 @@ export function renderStyledText(
     out.push(inner)
   }
 
-  for (const sp of style) {
+  for (const sp of styleAdj) {
     if (sp.start > pos) emit(null, pos, sp.start)
     emit(sp, sp.start, sp.end)
     pos = sp.end
@@ -239,15 +283,19 @@ export function segmentsToText(segments: Segment[]): string {
 }
 
 /**
- * ÎÄµµ¼¶ÅÅ°æÈİÆ÷ÑùÊ½£¨¡ì6.4/¡ì5.3£©¡ª¡ªÓÉÊÓÍ¼²ãÓ¦ÓÃµ½¶Ô±ÈÈİÆ÷£º
- *   - ÊúÅÅ£ºwriting-mode: vertical-rl£¨StoryDirection=LeftToRightDirection£©
- *   - ĞĞ¸ß£ºline-height = Leading ÏµÊı£¨43/28¡Ö1.536£©
- * ·Ç IDML ·µ»Ø¿Õ´®£¨²»Ó°ÏìÏÖÓĞÑùÊ½£©¡£
+ * æ–‡æ¡£çº§æ’ç‰ˆå®¹å™¨æ ·å¼ï¼ˆÂ§6.4/Â§5.3ï¼‰â€”â€”ç”±è§†å›¾å±‚åº”ç”¨åˆ°å¯¹æ¯”å®¹å™¨ï¼š
+ *   - ç«–æ’ï¼šwriting-mode: vertical-rlï¼ˆStoryDirection=LeftToRightDirectionï¼‰
+ *   - è¡Œé«˜ï¼šline-height = Leading ç³»æ•°ï¼ˆ43/28â‰ˆ1.536ï¼‰
+ *   - æ­£æ–‡å­—å·ï¼šIDML é»˜è®¤ PointSize=28ptï¼ˆÂ§5.2 ç˜¦èº«çœç•¥ â†’ å®¹å™¨çº§å…œåº•ï¼›
+ *     2026-08-05ï¼š15px å°å­—å·ä¼šè§¦å‘ Chrome ç«–æ’æ ‡ç‚¹ advance bugï¼Œä¸”åç¦»åŸæ’ç‰ˆï¼‰
+ * é IDML è¿”å›ç©ºä¸²ï¼ˆä¸å½±å“ç°æœ‰æ ·å¼ï¼‰ã€‚
  */
 export function getDocContainerStyle(meta: DocMeta | null | undefined): string {
-  if (!meta) return ''
+  // ç©ºå¯¹è±¡è§†ä¸ºæ—  metaï¼ˆé IDMLï¼‰ï¼šä¸æ³¨å…¥ä»»ä½•å®¹å™¨æ ·å¼
+  if (!meta || Object.keys(meta).length === 0) return ''
   const parts: string[] = []
   if (meta.vertical) parts.push('writing-mode:vertical-rl')
   if (meta.leadingRatio) parts.push(`line-height:${meta.leadingRatio}`)
+  parts.push('font-size:28pt')
   return parts.join(';')
 }

@@ -134,12 +134,12 @@ class TestCompareEndpoint:
     def test_oversized_file_read_in_chunks(self, client, tmp_path, monkeypatch):
         """方案 P1-2: 超限文件按 256KB 分块读取即中断，不做全量读入内存。
 
-        断言 UploadFile.read 被以分块大小调用（而非单次全量），且返回 413。
-        FastAPI File 端点收到的实例是 starlette.UploadFile（fastapi.UploadFile
-        是子类且未覆写 read）——须 patch starlette 基类才命中。
+        断言底层文件 read 被以分块大小调用（而非单次全量），且返回 413。
+        /api/compare 为同步端点（2026-08-06 防阻塞事件循环），_read_limited
+        直接读 UploadFile.file（SpooledTemporaryFile）——patch 底层 read 命中。
         """
         import src_backend.main as main_mod
-        import starlette.datastructures as sd
+        import tempfile
         monkeypatch.setattr(main_mod, "COMPARE_MAX_BYTES", 1024)  # 1KB 上限
 
         a_file = tmp_path / "a.txt"
@@ -148,13 +148,13 @@ class TestCompareEndpoint:
         b_file.write_text("y" * 10, encoding="utf-8")
 
         reads: list[int] = []
-        orig_read = sd.UploadFile.read
+        orig_read = tempfile.SpooledTemporaryFile.read
 
-        async def fake_read(self, size: int = -1) -> bytes:
+        def fake_read(self, size: int = -1) -> bytes:
             reads.append(size)
-            return await orig_read(self, size)
+            return orig_read(self, size)
 
-        monkeypatch.setattr(sd.UploadFile, "read", fake_read)
+        monkeypatch.setattr(tempfile.SpooledTemporaryFile, "read", fake_read)
 
         response = client.post(
             "/api/compare",

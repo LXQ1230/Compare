@@ -153,3 +153,30 @@ describe('restoreVersionSession (方案 P1-1c: 恢复结果落地)', () => {
     expect(store.meta?.scale).toBe('M');
   });
 });
+
+describe('isVerticalIdml (方案 A: 竖排 IDML 大文档查看态走 v-html)', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('docMeta.vertical=true → isVerticalIdml=true', async () => {
+    const store = useCompareStore();
+    await store.restoreVersionSession('甲', '乙', '竖排版本');
+    store.meta!.docMeta = { vertical: true, leadingRatio: 1.536, firstLineIndent: 0, fontsUnavailable: [] };
+    expect(store.isVerticalIdml).toBe(true);
+  });
+
+  it('docMeta.vertical=false/缺失 → isVerticalIdml=false', async () => {
+    const store = useCompareStore();
+    await store.restoreVersionSession('甲', '乙', '横排版本');
+    expect(store.isVerticalIdml).toBe(false);
+    store.meta!.docMeta = { vertical: false, leadingRatio: 1.5, firstLineIndent: 0, fontsUnavailable: [] };
+    expect(store.isVerticalIdml).toBe(false);
+  });
+
+  it('与 isLargeDoc 独立（小文档竖排 IDML 也识别）', async () => {
+    const store = useCompareStore();
+    await store.restoreVersionSession('甲', '乙', '小文档');
+    store.meta!.docMeta = { vertical: true, leadingRatio: 1.536, firstLineIndent: 0, fontsUnavailable: [] };
+    expect(store.isVerticalIdml).toBe(true);
+    expect(store.isLargeDoc).toBe(false);
+  });
+});

@@ -30,7 +30,7 @@ function jumpToLastEdit(): void {
   host?.__cmScrollToLastEdit?.();
 }
 
-defineEmits<{ export: []; versions: [] }>();
+defineEmits<{ export: []; versions: []; complete: [] }>();
 </script>
 
 <template>
@@ -62,6 +62,12 @@ defineEmits<{ export: []; versions: [] }>();
         @click="editorStore.saveDraft()"
         title="保存编辑草稿"
       >💾 保存草稿</button>
+      <button
+        v-if="editorStore.isEditing"
+        class="tb-btn complete-btn"
+        @click="$emit('complete')"
+        title="完成编辑并保存为版本"
+      >✓ 完成</button>
       <button
         v-if="editorStore.isEditing && editorStore.lastEditOffset >= 0"
         class="tb-btn"
@@ -109,5 +115,13 @@ defineEmits<{ export: []; versions: [] }>();
 .save-btn {
   border-color: var(--color-focus-border);
   color: var(--color-focus-border);
+}
+.complete-btn {
+  border-color: #22c55e;
+  color: #22c55e;
+  font-weight: 600;
+}
+.complete-btn:hover {
+  background: rgba(34, 197, 94, 0.1);
 }
 </style>

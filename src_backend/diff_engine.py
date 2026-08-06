@@ -1,6 +1,16 @@
 """Diff engine wrapper around google-diff-match-patch."""
 
+import hashlib
+
 from diff_match_patch import diff_match_patch
+
+# ── 大文档段落级 LCS 流水线（v7 已验证：63 万字 3.7s vs 全局 DMP 129s）──
+_SEP = "\u2029"                     # IDML 段落分隔符（保留在段尾）
+_LARGE_DOC_THRESHOLD = 150_000     # max(len) ≥ 此值走段落 LCS 路径
+_REGION_DMP_MAX = 4096             # 替换组总长 ≤ 此值 → 组内字符级 DMP
+_PAIR_DMP_MAX = 2048               # 单对（1 del 段 + 1 add 段）≤ 此值 → 组内 DMP
+_DMP_FINE_TIMEOUT = 30             # 组内 DMP 超时兜底（秒）
+_PARA_LCS_MAX_CELLS = 5_000_000    # 段落 LCS DP 矩阵格数上限（防内存失控）
 
 # 标点字符集（标点移动优先重写用）——中文标点 + 英文标点
 _PUNCT_CHARS = set(
@@ -39,6 +49,11 @@ def _strip_punct(s: str) -> str:
 def _strip_sep(s: str) -> str:
     """去掉标点与空白，仅留内容实词。"""
     return "".join(c for c in s if c not in _PUNCT_CHARS and c not in _WS_CHARS)
+
+
+def _strip_ws(s: str) -> str:
+    """仅去掉空白符（保留标点）——重建校验 A 侧用（W 归因隐藏孤立空白）。"""
+    return "".join(c for c in s if c not in _WS_CHARS)
 
 
 def _merge_adjacent(raw_diffs: list) -> list:
@@ -271,6 +286,69 @@ def _resolve_whitespace(raw_diffs: list) -> list:
     return out
 
 
+def _coarse_punct_alignment(x: str, y: str) -> list | None:
+    """coarse 组标点归因（2026-08-06）。
+
+    大文档段落 LCS 的 coarse 分支（替换组超限，跳过 DMP）在输出整段 DEL+ADD 前，
+    先做实词对齐检测：去标点+空白后实词串相同 → 间隙对齐输出细粒度
+    "DEL 标点 + EQ 实词 + ADD 标点"，再叠加 W 空白归因折叠 + 相邻合并。
+    实词不同（真重写）→ 返回 None（保持段落级 DEL+ADD）。
+
+    与 _resolve_punct_alignment（L3）同构，复用 split_by_sep 间隙对齐逻辑，
+    但无需邻接安全检查（coarse 输出是独立的，不与前后 fine 段交错）。
+    """
+    wx, wy = _strip_sep(x), _strip_sep(y)
+    if not wx or wx != wy:
+        return None
+
+    def split_by_sep(s: str) -> tuple[list[str], list[str]]:
+        gaps = [""]
+        chars = []
+        for c in s:
+            if c in _PUNCT_CHARS or c in _WS_CHARS:
+                gaps[-1] += c
+            else:
+                chars.append(c)
+                gaps.append("")
+        return gaps, chars
+
+    gx, cx = split_by_sep(x)
+    gy, cy = split_by_sep(y)
+    out: list = []
+    eq_buf = ""
+    for k in range(len(cx)):
+        d, a = gx[k], gy[k]
+        if d != a:
+            if eq_buf:
+                out.append((0, eq_buf))
+                eq_buf = ""
+            if d:
+                out.append((-1, d))
+            if a:
+                out.append((1, a))
+        else:
+            eq_buf += d
+        eq_buf += cx[k]
+    # 尾间隙
+    d, a = gx[len(cx)], gy[len(cy)]
+    if d != a:
+        if eq_buf:
+            out.append((0, eq_buf))
+            eq_buf = ""
+        if d:
+            out.append((-1, d))
+        if a:
+            out.append((1, a))
+    else:
+        eq_buf += d
+    if eq_buf:
+        out.append((0, eq_buf))
+
+    out = _resolve_whitespace(out)
+    out = _merge_adjacent(out)
+    return out
+
+
 def _build_segments(raw_diffs: list) -> tuple[list[dict], dict, list]:
     """把 raw_diffs 转为 segments + stats，同时记录 A/B 侧游标区间。
 
@@ -392,6 +470,148 @@ def diff_texts(orig: str, modified: str) -> tuple[list[dict], dict]:
     return diff_texts_with_style(orig, modified)
 
 
+def _split_keep(text: str, sep: str) -> list:
+    """按 sep 切分且保留 sep 在段尾（最后一段除外）。"""
+    parts = text.split(sep)
+    out = []
+    for p in parts[:-1]:
+        out.append(p + sep)
+    if parts:
+        out.append(parts[-1])
+    return out
+
+
+def _diff_fine_group(dmp, d_text: str, a_text: str) -> list:
+    """替换组内字符级 diff + 标点归因防线（与全局路径语义完全一致）。"""
+    d = dmp.diff_main(d_text, a_text)
+    dmp.diff_cleanupSemantic(d)
+    d = _resolve_punct_transposition(d)
+    d = _resolve_punct_substring(d)
+    d = _resolve_punct_alignment(d)
+    d = _resolve_whitespace(d)
+    return d
+
+
+def diff_texts_para_lcs(
+    orig: str,
+    modified: str,
+    spans_a: list | None = None,
+    spans_b: list | None = None,
+) -> tuple[list[dict], dict]:
+    """大文档段落级 LCS diff（v7 方案落地，2026-08-06）。
+
+    流水线：split_keep 切段（保留 U+2029 段尾）→ MD5 → 段落级完整 DP LCS
+    → 回溯对齐 → 替换组限长（总长 ≤4096 或单对 ≤2048 做组内字符级 DMP，
+    超限 coarse 分支先尝试标点归因兜底，实词相同则间隙对齐输出细粒度，
+    实词不同则退化为段落级 DEL+ADD）→ 组内标点归因防线（L1/L2/L3/W）→
+    全量 merge → 重建校验 → _build_segments + _attach_spans。
+
+    正确性保证：
+      - 段落对齐基于精确哈希（内容完全相同的段才 eq），LCS 保证覆盖全文；
+      - 输出 raw_diffs 与全局路径同构（eq/del/add 三元组 + mod 由
+        _build_segments 合成），前端渲染/编辑/autosave 零改动；
+      - 重建校验：B 侧严格相等；A 侧允许空白差异（W 归因隐藏孤立空白）。
+    """
+    pa = _split_keep(orig, _SEP)
+    pb = _split_keep(modified, _SEP)
+    ha = [hashlib.md5(p.encode("utf-8")).hexdigest() for p in pa]
+    hb = [hashlib.md5(p.encode("utf-8")).hexdigest() for p in pb]
+
+    n, m = len(pa), len(pb)
+    if n * m > _PARA_LCS_MAX_CELLS:
+        raise ValueError(f"para LCS matrix too large: {n}x{m}")
+
+    # ── 段落级完整 DP LCS ──
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n):
+        hi = ha[i]
+        row = dp[i]
+        nrow = dp[i + 1]
+        for j in range(m):
+            if hi == hb[j]:
+                nrow[j + 1] = row[j] + 1
+            else:
+                nrow[j + 1] = max(row[j + 1], nrow[j])
+
+    # ── 回溯对齐 ──
+    align = []
+    i, j = n, m
+    while i > 0 and j > 0:
+        if ha[i - 1] == hb[j - 1]:
+            align.append(("eq", i - 1, j - 1))
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] > dp[i][j - 1]:
+            align.append(("del", i - 1))
+            i -= 1
+        else:
+            align.append(("add", j - 1))
+            j -= 1
+    while i > 0:
+        align.append(("del", i - 1))
+        i -= 1
+    while j > 0:
+        align.append(("add", j - 1))
+        j -= 1
+    align.reverse()
+
+    # ── 组装：eq 原样；连续 del/add 组成替换组，限长策略 fine/coarse ──
+    dmp = diff_match_patch()
+    dmp.Diff_Timeout = _DMP_FINE_TIMEOUT
+    raw_parts: list = []
+    del_buf: list = []
+    add_buf: list = []
+
+    def flush_pair():
+        nonlocal del_buf, add_buf
+        if not del_buf and not add_buf:
+            return
+        d_text = "".join(del_buf)
+        a_text = "".join(add_buf)
+        d_len, a_len = len(d_text), len(a_text)
+        if (d_len + a_len) <= _REGION_DMP_MAX:
+            raw_parts.extend(_diff_fine_group(dmp, d_text, a_text))
+        elif (
+            len(del_buf) == 1 and len(add_buf) == 1
+            and (d_len + a_len) <= _PAIR_DMP_MAX
+        ):
+            raw_parts.extend(_diff_fine_group(dmp, d_text, a_text))
+        else:
+            # coarse：先尝试标点归因（实词相同 → 间隙对齐），失败则段落级展示
+            rebuilt = _coarse_punct_alignment(d_text, a_text)
+            if rebuilt is not None:
+                raw_parts.extend(rebuilt)
+            else:
+                if d_text:
+                    raw_parts.append((-1, d_text))
+                if a_text:
+                    raw_parts.append((1, a_text))
+        del_buf = []
+        add_buf = []
+
+    for item in align:
+        if item[0] == "eq":
+            flush_pair()
+            raw_parts.append((0, pa[item[1]]))
+        elif item[0] == "del":
+            del_buf.append(pa[item[1]])
+        else:
+            add_buf.append(pb[item[1]])
+    flush_pair()
+
+    raw_diffs = _merge_adjacent(raw_parts)
+
+    # ── 重建校验：B 严格相等；A 允许空白差异（W 隐藏孤立空白）──
+    rebuilt_a = "".join(t for op, t in raw_diffs if op in (0, -1))
+    rebuilt_b = "".join(t for op, t in raw_diffs if op in (0, 1))
+    if rebuilt_b != modified or _strip_ws(rebuilt_a) != _strip_ws(orig):
+        raise ValueError("para LCS rebuild mismatch — fallback to global DMP")
+
+    segments, stats, cursor_info = _build_segments(raw_diffs)
+    _attach_spans(segments, cursor_info, spans_a, spans_b)
+    return segments, stats
+
+
 def diff_texts_with_style(
     orig: str,
     modified: str,
@@ -405,6 +625,13 @@ def diff_texts_with_style(
     侧归属（§6.1）：none 段取 A 侧样式（以原文件为准）；add 段取 B 侧；
     del/mod-old 取 A 侧；mod-new 取 B 侧。
     """
+    # 大文档自动切换段落 LCS 路径（v7 已验证）；失败回退全局 DMP（慢但正确）
+    if max(len(orig), len(modified)) >= _LARGE_DOC_THRESHOLD:
+        try:
+            return diff_texts_para_lcs(orig, modified, spans_a, spans_b)
+        except (ValueError, MemoryError):
+            pass
+
     dmp = diff_match_patch()
     dmp.Diff_Timeout = 0
     raw_diffs = dmp.diff_main(orig, modified)

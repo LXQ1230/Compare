@@ -32,10 +32,14 @@ function isProcessed(ci: number): boolean {
 function scrollTo(ci: number) {
   // Rev. E3 + 方案 P2-3: 编辑模式或大文档查看态都走 CodeMirror 通道
   // (__cmScrollToCi)，否则经典 ci-N DOM 锚点（大文档无 DOM 锚点）。
+  // 竖排 IDML 大文档查看态走 v-html（有 ci-N 锚点）→ 经典路径。
   const host = document.querySelector('.report-main') as
     | (HTMLElement & { __cmScrollToCi?: (ci: number) => void })
     | null;
-  if ((editorStore.isEditing || compareStore.isLargeDoc) && host?.__cmScrollToCi) {
+  if (
+    (editorStore.isEditing || (compareStore.isLargeDoc && !compareStore.isVerticalIdml))
+    && host?.__cmScrollToCi
+  ) {
     host.__cmScrollToCi(ci);
     return;
   }

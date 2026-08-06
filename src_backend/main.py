@@ -68,18 +68,20 @@ class VersionSaveRequest(BaseModel):
     style_a: list = []
     style_b: list = []
     doc_meta: dict = {}
+    session_key: str = ""
 
 
 # ── Helpers ───────────────────────────────────────────────────────
 
-async def _read_limited(upload: UploadFile, sink, max_bytes: int) -> int:
+def _read_limited(upload: UploadFile, sink, max_bytes: int) -> int:
     """分块读取上传，超限立即中断并抛 413（方案 P1-2，防内存 DoS）。
 
     替代原先的全量 read + tell() 检查——超限文件不再被整体读入内存。
+    同步版：/api/compare 为同步端点（丢线程池，防阻塞事件循环）。
     """
     total = 0
     while True:
-        chunk = await upload.read(256 * 1024)
+        chunk = upload.file.read(256 * 1024)
         if not chunk:
             break
         total += len(chunk)
@@ -228,11 +230,15 @@ async def health():
 
 
 @app.post("/api/compare")
-async def compare(
+def compare(
     fileA: UploadFile = File(...),
     fileB: UploadFile = File(...),
 ):
-    """Compare two documents and return character-level diff as NDJSON stream."""
+    """Compare two documents and return character-level diff as NDJSON stream.
+
+    同步 def（非 async）：diff 是 CPU 密集操作，FastAPI 自动丢线程池执行，
+    防止阻塞事件循环导致 health/autosave 等其他端点假死（2026-08-06 修复）。
+    """
     ext_a = _validate_upload(fileA)
     ext_b = _validate_upload(fileB)
 
@@ -241,8 +247,8 @@ async def compare(
 
     try:
         # 方案 P1-2: 分块读取，超限立即中断（不再全量读入内存后 tell() 检查）
-        await _read_limited(fileA, tmp_a, COMPARE_MAX_BYTES)
-        await _read_limited(fileB, tmp_b, COMPARE_MAX_BYTES)
+        _read_limited(fileA, tmp_a, COMPARE_MAX_BYTES)
+        _read_limited(fileB, tmp_b, COMPARE_MAX_BYTES)
         tmp_a.flush()
         tmp_b.flush()
 
@@ -323,15 +329,16 @@ async def version_save(req: VersionSaveRequest):
     vid = vm.save(
         req.label, req.file_a_content, req.file_b_content, req.stats,
         style_a=req.style_a, style_b=req.style_b, doc_meta=req.doc_meta,
+        session_key=req.session_key,
     )
     return {"status": "ok", "id": vid}
 
 
 @app.get("/api/versions/list")
-async def version_list():
-    """List all saved versions, newest first."""
+async def version_list(session_key: str = ""):
+    """List saved versions, newest first. Filter by session_key if provided."""
     vm = VersionManager(storage_dir=_get_versions_dir())
-    return {"status": "ok", "versions": vm.list()}
+    return {"status": "ok", "versions": vm.list(session_key)}
 
 
 @app.post("/api/versions/restore/{version_id}")
