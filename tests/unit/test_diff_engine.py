@@ -1,6 +1,7 @@
 from src_backend.diff_engine import (
     diff_texts, make_patches, apply_patches,
-    _resolve_punct_substring, _resolve_punct_alignment, _resolve_whitespace,
+    _strip_sep, _resolve_punct_substring, _resolve_punct_alignment,
+    _resolve_whitespace, _coarse_punct_alignment, _align_gap_pair,
 )
 
 
@@ -309,3 +310,129 @@ class TestPatches:
         patches = make_patches(text, text)
         result, _ = apply_patches(text, patches)
         assert result == text
+
+
+class TestSepU2029Attribution:
+    """方案 A：U+2029 归因修复（2026-08-07）。
+
+    U+2029（IDML 段落分隔符）既不在标点集也不在空白集，修复前被当实词保留，
+    导致「仅段落分隔符位置差异」的 DEL/ADD 对被误判为实词不同 → 放弃标点归因
+    → 整段 DEL+ADD（497 实测 15 组真重写中 2 组因此误判）。
+    修复：_strip_sep 剥离 U+2029；split_by_sep 视 U+2029 为分隔符。
+    """
+
+    def test_strip_sep_removes_u2029(self):
+        """_strip_sep('abc\u2029def') → 'abcdef'（U+2029 不再被当实词保留）。"""
+        assert _strip_sep("abc\u2029def") == "abcdef"
+        # 回归：标点与空白仍被剥离，实词保留
+        assert _strip_sep("經卷第三。\u3000東晉譯\u2029") == "經卷第三東晉譯"
+
+    def test_l3_aligns_group_with_u2029(self):
+        """L3 对含 U+2029 的替换组正确归因（X='abc\u2029def', Y='\u2029abcdef'
+        → 间隙对齐：ADD U+2029 + EQ abc + DEL U+2029 + EQ def）。"""
+        raw = [(-1, "abc\u2029def"), (1, "\u2029abcdef")]
+        out = _resolve_punct_alignment(raw)
+        # 重建一致性：A 侧 = DEL+EQ 段拼接，B 侧 = ADD+EQ 段拼接
+        rebuilt_a = "".join(t for op, t in out if op in (0, -1))
+        rebuilt_b = "".join(t for op, t in out if op in (0, 1))
+        assert rebuilt_a == "abc\u2029def"
+        assert rebuilt_b == "\u2029abcdef"
+        # 精确断言：U+2029 被归因为分隔符变更（ADD/DEL），实词保持 EQ
+        assert out == [
+            (1, "\u2029"), (0, "a"), (0, "b"), (0, "c"),
+            (-1, "\u2029"), (0, "d"), (0, "e"), (0, "f"),
+        ]
+
+    def test_l3_u2029_end_to_end(self):
+        """端到端：含 U+2029 的替换文档不再整段 DEL+ADD，实词保持 EQ。"""
+        a = "經卷第三\u2029東晉譯\u2029次段內容"
+        b = "\u2029經卷第三東晉譯\u2029次段內容"
+        segments, stats = diff_texts(a, b)
+        ops = [(s["operation"], s.get("side"), s["text"]) for s in segments]
+        assert ("add", None, "\u2029") in ops
+        assert ("del", None, "\u2029") in ops
+        # 实词保持 EQ（東晉譯 与后续无差异文本合并为一个 none 段）
+        assert ("none", None, "經卷第三") in ops
+        assert any(op == "none" and "東晉譯" in t for op, side, t in ops)
+
+    def test_coarse_aligns_group_with_u2029(self):
+        """coarse 分支（段落拼接场景）对含 U+2029 的组正确归因：
+        X='經卷第三\u2029東晉譯\u2029'（A 侧 2 段）vs Y='經卷第三東晉譯\u2029'
+        （B 侧 1 段，仅段落分隔符位置差异）→ 间隙对齐输出细粒度。"""
+        x = "經卷第三\u2029東晉譯\u2029"
+        y = "經卷第三東晉譯\u2029"
+        out = _coarse_punct_alignment(x, y)
+        assert out is not None
+        rebuilt_a = "".join(t for op, t in out if op in (0, -1))
+        rebuilt_b = "".join(t for op, t in out if op in (0, 1))
+        assert rebuilt_a == x
+        assert rebuilt_b == y
+        # 中间 U+2029 被归因为 DEL（B 侧无此分隔符）；尾部 U+2029 两侧相同 → EQ
+        assert (-1, "\u2029") in [(op, t) for op, t in out]
+
+    def test_coarse_u2029_both_sides_aligned(self):
+        """coarse 双侧场景：Y 开头多出 U+2029（ADD）+ X 中间 U+2029（DEL）。"""
+        x = "經卷第三\u2029東晉譯\u2029"
+        y = "\u2029經卷第三東晉譯\u2029"
+        out = _coarse_punct_alignment(x, y)
+        assert out is not None
+        rebuilt_a = "".join(t for op, t in out if op in (0, -1))
+        rebuilt_b = "".join(t for op, t in out if op in (0, 1))
+        assert rebuilt_a == x
+        assert rebuilt_b == y
+        ops = [(op, t) for op, t in out]
+        assert (1, "\u2029") in ops   # Y 开头新增分隔符
+        assert (-1, "\u2029") in ops  # X 中间删除分隔符
+
+    def test_coarse_real_rewrite_still_returns_none(self):
+        """实词确实不同（真重写）→ 仍返回 None（段落级 DEL+ADD 语义保留）。"""
+        x = "中阿含經卷第三十七\u2029"
+        y = "中阿含經卷第四十一\u2029"
+        assert _coarse_punct_alignment(x, y) is None
+
+
+class TestAlignGapPair:
+    """gap 公共前缀/后缀对齐（方案 A 增强，2026-08-07）。
+
+    U+2029 作为分隔符后，间隙对齐若整体比较 gap，「誦\u2029 → 誦。\u2029」
+    会输出 DEL '\u2029' + ADD '。\u2029'（用户只加句号却显示成替换/结构变更）；
+    公共对齐把相同部分保持 EQ，只对差异部分 DEL/ADD，mod 不膨胀。
+    """
+
+    def test_punct_insert_next_to_sep(self):
+        """'誦\u2029' → '誦。\u2029'：公共后缀 \u2029 保持 EQ，仅 ADD '。'。"""
+        out = _align_gap_pair("\u2029", "。\u2029")
+        assert out == [(1, "。"), (0, "\u2029")]
+
+    def test_punct_delete_next_to_sep(self):
+        """'誦。\u2029' → '誦\u2029'：公共后缀 \u2029 保持 EQ，仅 DEL '。'。"""
+        out = _align_gap_pair("。\u2029", "\u2029")
+        assert out == [(-1, "。"), (0, "\u2029")]
+
+    def test_sep_move_both_sides(self):
+        """'\u2029' vs '。\u2029' 反向后缀：ADD 标点 + EQ 分隔符。"""
+        out = _align_gap_pair("\u2029", "。\u2029")
+        assert out == [(1, "。"), (0, "\u2029")]
+
+    def test_pure_punct_replace_unchanged(self):
+        """'。' vs '，'（真替换）→ 无公共部分 → DEL+ADD（mod 语义保持）。"""
+        out = _align_gap_pair("。", "，")
+        assert out == [(-1, "。"), (1, "，")]
+
+    def test_identical_gap_eq(self):
+        """两侧 gap 相同 → EQ（不再输出无意义的 DEL+ADD）。"""
+        assert _align_gap_pair("。", "。") == [(0, "。")]
+        assert _align_gap_pair("", "") == []
+        assert _align_gap_pair("", "。") == [(1, "。")]
+
+    def test_coarse_gap_align_no_mod_inflation(self):
+        """coarse 端到端：'誦\u2029' → '誦。\u2029' 只新增句号，无替换 mod。"""
+        x = "佛說如是。誦\u2029次段"
+        y = "佛說如是。誦。\u2029次段"
+        out = _coarse_punct_alignment(x, y)
+        assert out is not None
+        ops = [(op, t) for op, t in out]
+        assert (1, "。") in ops                       # 仅新增句号
+        assert any(op == 0 and "\u2029" in t for op, t in ops)  # U+2029 保持 EQ
+        # 不得出现 DEL '\u2029' + ADD '。\u2029' 的替换
+        assert (-1, "\u2029") not in ops

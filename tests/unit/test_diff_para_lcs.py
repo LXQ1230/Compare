@@ -112,6 +112,93 @@ class TestParaLcsPunctSemantics:
         assert not any(op == "del" for op, _ in ops)  # 空白删除被隐藏
 
 
+class TestParaLcsNormalizedHash:
+    """方案 B：归一化哈希段落 LCS（2026-08-07）。
+
+    LCS eq 判定从原文精确哈希改为归一化哈希（_strip_sep 剥离标点+空白+U+2029）：
+    只差标点/空白/段落分隔符的段直接对齐为 eq，不再进替换组；eq 段对原文
+    不同时用 _coarse_punct_alignment 间隙对齐细粒度化（回退段内 DMP）。
+    """
+
+    def _ops(self, fn, a, b):
+        segments, _ = fn(a, b)
+        return [(s["operation"], s.get("side"), s["text"]) for s in segments]
+
+    def test_punct_only_diff_aligns_as_eq(self):
+        """两段仅标点不同 → 对齐为 eq（段对间隙对齐），不再整段 DEL+ADD。"""
+        a = "我聞如是。一時。\u2029佛逰舎衛國。在勝林給孤獨園。"
+        b = "我聞如是。一時。\u2029佛逰舎衛國。在勝林給孤獨園。"  # 无差异
+        # 构造仅标点差异：段1 加标点
+        a = "我聞如是。一時。\u2029佛逰舎衛國在勝林給孤獨園"
+        b = "我聞如是。一時。\u2029佛逰舎衛國。在勝林給孤獨園。"
+        segments, stats = diff_texts_para_lcs(a, b)
+        ops = [(s["operation"], s.get("side"), s["text"]) for s in segments]
+        # 实词保持 none（段对间隙对齐），标点归因为 add
+        assert ("add", None, "。") in ops
+        assert not any(op in ("del", "mod") for op, _, _ in ops)
+        assert _rebuild(segments, "a") == a
+        assert _rebuild(segments, "b") == b
+
+    def test_sep_move_between_paras_eq(self):
+        """仅段落分隔符位置差异 → 段对间隙对齐，分隔符增删可见。"""
+        a = "經卷第三\u2029東晉譯\u2029次段"
+        b = "經卷第三東晉譯\u2029次段"
+        segments, stats = diff_texts_para_lcs(a, b)
+        ops = [(s["operation"], s.get("side"), s["text"]) for s in segments]
+        # U+2029 删除可见（结构变化），实词保持 none
+        assert ("del", None, "\u2029") in ops
+        assert _rebuild(segments, "a") == a
+        assert _rebuild(segments, "b") == b
+
+    def test_empty_normalized_para(self):
+        """归一化后为空的段（纯 \u2029 / \u3000\u2029）LCS 对齐正确。"""
+        a = "甲\u2029\u3000\u2029乙\u2029"
+        b = "甲\u2029\u2029乙\u2029"
+        segments, stats = diff_texts_para_lcs(a, b)
+        # A 侧允许空白差异（\u3000 被 W 归因隐藏）；B 侧严格相等
+        from src_backend.diff_engine import _strip_ws
+        assert _strip_ws(_rebuild(segments, "a")) == _strip_ws(a)
+        assert _rebuild(segments, "b") == b
+
+    def test_duplicate_template_para(self):
+        """重复模板段（归一化哈希相同）贪心对齐无副作用，重建一致。"""
+        tmpl_a = "東晉罽賓三藏瞿曇僧伽提婆譯\u2029"
+        tmpl_b = "東晉罽賓三藏瞿曇僧伽提婆譯。\u2029"
+        a = tmpl_a + tmpl_a + "正文"
+        b = tmpl_b + tmpl_b + "正文"
+        segments, stats = diff_texts_para_lcs(a, b)
+        assert _rebuild(segments, "a") == a
+        assert _rebuild(segments, "b") == b
+        ops = [(s["operation"], s.get("side"), s["text"]) for s in segments]
+        # 模板段只差标点 → 对齐 eq + 间隙对齐（ADD 。），无整段 DEL+ADD
+        assert ("add", None, "。") in ops
+        assert not any(op == "del" and t == tmpl_a for op, side, t in ops)
+
+    def test_real_rewrite_still_goes_through_replace_group(self):
+        """实词不同（真重写）→ 归一化哈希不同 → 进替换组，不误对齐。"""
+        a = "中阿含經卷第三十七\u2029正文"
+        b = "中阿含經卷第四十一\u2029正文"
+        segments, stats = diff_texts_para_lcs(a, b)
+        ops = [(s["operation"], s.get("side"), s["text"]) for s in segments]
+        # 第三十七/第四十一 是实词差异 → mod（替换），正文保持 none（与段尾 U+2029 合并）
+        assert any(op == "mod" for op, _, _ in ops)
+        assert any(op == "none" and "正文" in t for op, _, t in ops)
+        assert _rebuild(segments, "a") == a
+        assert _rebuild(segments, "b") == b
+
+    def test_eq_pair_fallback_to_dmp(self):
+        """归一化对齐但间隙对齐返回 None（如空归一化 + 标点差异）→ 回退段内 DMP。"""
+        # 段对 '\u2029' vs '。\u2029'：_strip_sep 后均空 → coarse 返回 None
+        # → 回退 _diff_fine_group，DMP 输出 DEL '。'? 不——是 ADD '。'
+        a = "甲\u2029乙"
+        b = "甲。\u2029乙"
+        segments, stats = diff_texts_para_lcs(a, b)
+        ops = [(s["operation"], s.get("side"), s["text"]) for s in segments]
+        assert ("add", None, "。") in ops
+        assert _rebuild(segments, "a") == a
+        assert _rebuild(segments, "b") == b
+
+
 class TestParaLcsSwitch:
     """规模阈值自动切换 + 失败回退。"""
 

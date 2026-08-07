@@ -297,3 +297,34 @@ describe('实词对齐兜底 L3', () => {
     expect(raw).toContainEqual([1, '。']);
   });
 });
+
+describe('U+2029 归因（方案 A，2026-08-07 后端同步）', () => {
+  it('L3 对含 U+2029 的替换组间隙对齐（与后端 _resolve_punct_alignment 一致）', () => {
+    const raw: [number, string][] = [[-1, 'abc\u2029def'], [1, '\u2029abcdef']];
+    const out = resolvePunctAlignment(raw);
+    // 重建一致性
+    const rebuiltA = out.filter(([op]) => op === 0 || op === -1).map(([, t]) => t).join('');
+    const rebuiltB = out.filter(([op]) => op === 0 || op === 1).map(([, t]) => t).join('');
+    expect(rebuiltA).toBe('abc\u2029def');
+    expect(rebuiltB).toBe('\u2029abcdef');
+    // U+2029 归因为分隔符变更，实词保持 EQ
+    expect(out).toContainEqual([1, '\u2029']);
+    expect(out).toContainEqual([-1, '\u2029']);
+    expect(out).toContainEqual([0, 'a']);
+    expect(out).toContainEqual([0, 'd']);
+  });
+
+  it('diffSafely 端到端：仅 U+2029 位置差异不再整段 DEL+ADD', () => {
+    const raw = diffSafely('經卷第三\u2029東晉譯', '\u2029經卷第三東晉譯');
+    expect(raw).toContainEqual([1, '\u2029']);
+    expect(raw).toContainEqual([-1, '\u2029']);
+    expect(raw).toContainEqual([0, '經卷第三']);
+    // 实词不得被整段删除/新增
+    expect(raw.filter(([op, t]) => op === -1 && t.includes('經卷第三'))).toHaveLength(0);
+  });
+
+  it('实词不同仍保持原样（真重写不误归因）', () => {
+    const raw: [number, string][] = [[-1, '聞\u2029'], [1, '見\u2029']];
+    expect(resolvePunctAlignment(raw)).toEqual(raw);
+  });
+});

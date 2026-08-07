@@ -47,8 +47,13 @@ def _strip_punct(s: str) -> str:
 
 
 def _strip_sep(s: str) -> str:
-    """去掉标点与空白，仅留内容实词。"""
-    return "".join(c for c in s if c not in _PUNCT_CHARS and c not in _WS_CHARS)
+    """去掉标点、空白与 U+2029（段落分隔符），仅留内容实词。
+
+    U+2029 是段落结构符（IDML `<Br/>` 映射而来）而非内容字符，在实词
+    比较中应视为分隔符（与标点、空白同族）——否则实词串会含 U+2029，
+    导致「仅段落分隔符位置差异」的段对被误判为实词不同（2026-08-07 修复）。
+    """
+    return "".join(c for c in s if c not in _PUNCT_CHARS and c not in _WS_CHARS and c != _SEP)
 
 
 def _strip_ws(s: str) -> str:
@@ -165,6 +170,38 @@ def _resolve_punct_substring(raw_diffs: list) -> list:
     return out
 
 
+def _align_gap_pair(d: str, a: str) -> list:
+    """间隙对齐核心：把 gap 对 (d, a) 输出为 ops 序列。
+
+    公共前缀/后缀保持 EQ，中间差异部分输出 DEL/ADD——而非整体替换。
+    2026-08-07（方案 A 增强）：U+2029 作为分隔符后，若 gap 整体比较，
+    「誦\\u2029 → 誦。\\u2029」（用户只加句号）会输出 DEL '\\u2029' +
+    ADD '。\\u2029' 合成 mod；公共对齐后输出 ADD '。' + EQ '\\u2029'，
+    标点插入显示干净，段落分隔符（结构未变）保持 EQ 可见。
+    """
+    if d == a:
+        return [(0, d)] if d else []
+    out = []
+    # 公共前缀
+    i = 0
+    while i < len(d) and i < len(a) and d[i] == a[i]:
+        i += 1
+    if i:
+        out.append((0, d[:i]))
+    # 公共后缀（前缀之后）
+    jd, ja = len(d), len(a)
+    while jd > i and ja > i and d[jd - 1] == a[ja - 1]:
+        jd -= 1
+        ja -= 1
+    if jd > i:
+        out.append((-1, d[i:jd]))
+    if ja > i:
+        out.append((1, a[i:ja]))
+    if jd < len(d):
+        out.append((0, d[jd:]))
+    return out
+
+
 def _resolve_punct_alignment(raw_diffs: list) -> list:
     """实词对齐兜底（L3）：把「DEL X + ADD Y」中去标点与空白后实词串相同的对，
     强制按标点归因重写。这是标点归因三层的最后防线：
@@ -186,13 +223,13 @@ def _resolve_punct_alignment(raw_diffs: list) -> list:
         return raw_diffs
 
     def split_by_sep(s: str) -> tuple[list[str], list[str]]:
-        """把 s 拆为 (gaps, chars)：标点与空白都视为分隔符。
+        """把 s 拆为 (gaps, chars)：标点、空白与 U+2029 都视为分隔符。
         gaps[k] 为第 k 个实词字符前的分隔符段，gaps[len(chars)] 为末尾段；
         chars 为非分隔符字符（内容实词）列表。"""
         gaps = [""]
         chars = []
         for c in s:
-            if c in _PUNCT_CHARS or c in _WS_CHARS:
+            if c in _PUNCT_CHARS or c in _WS_CHARS or c == _SEP:
                 gaps[-1] += c
             else:
                 chars.append(c)
@@ -218,15 +255,9 @@ def _resolve_punct_alignment(raw_diffs: list) -> list:
                 if cx == cy:
                     rebuilt: list = []
                     for k, wch in enumerate(cx):
-                        if gx[k]:
-                            rebuilt.append((-1, gx[k]))
-                        if gy[k]:
-                            rebuilt.append((1, gy[k]))
+                        rebuilt.extend(_align_gap_pair(gx[k], gy[k]))
                         rebuilt.append((0, wch))
-                    if gx[len(cx)]:
-                        rebuilt.append((-1, gx[len(cx)]))
-                    if gy[len(cy)]:
-                        rebuilt.append((1, gy[len(cy)]))
+                    rebuilt.extend(_align_gap_pair(gx[len(cx)], gy[len(cy)]))
                     # 邻接安全检查：防止重写后的 DEL/ADD 与前后操作相邻被合成 mod
                     safe = True
                     if rebuilt:
@@ -305,7 +336,7 @@ def _coarse_punct_alignment(x: str, y: str) -> list | None:
         gaps = [""]
         chars = []
         for c in s:
-            if c in _PUNCT_CHARS or c in _WS_CHARS:
+            if c in _PUNCT_CHARS or c in _WS_CHARS or c == _SEP:
                 gaps[-1] += c
             else:
                 chars.append(c)
@@ -322,10 +353,7 @@ def _coarse_punct_alignment(x: str, y: str) -> list | None:
             if eq_buf:
                 out.append((0, eq_buf))
                 eq_buf = ""
-            if d:
-                out.append((-1, d))
-            if a:
-                out.append((1, a))
+            out.extend(_align_gap_pair(d, a))
         else:
             eq_buf += d
         eq_buf += cx[k]
@@ -335,10 +363,7 @@ def _coarse_punct_alignment(x: str, y: str) -> list | None:
         if eq_buf:
             out.append((0, eq_buf))
             eq_buf = ""
-        if d:
-            out.append((-1, d))
-        if a:
-            out.append((1, a))
+        out.extend(_align_gap_pair(d, a))
     else:
         eq_buf += d
     if eq_buf:
@@ -500,44 +525,51 @@ def diff_texts_para_lcs(
 ) -> tuple[list[dict], dict]:
     """大文档段落级 LCS diff（v7 方案落地，2026-08-06）。
 
-    流水线：split_keep 切段（保留 U+2029 段尾）→ MD5 → 段落级完整 DP LCS
+    流水线：split_keep 切段（保留 U+2029 段尾）→ 双哈希（原文 + 归一化）
+    → 段落级完整 DP LCS（**归一化哈希 eq**：剥离标点/空白/U+2029 后相同即对齐，
+    方案 B 2026-08-07——只差标点/空白/段落分隔符的段不再进替换组）
     → 回溯对齐 → 替换组限长（总长 ≤4096 或单对 ≤2048 做组内字符级 DMP，
     超限 coarse 分支先尝试标点归因兜底，实词相同则间隙对齐输出细粒度，
-    实词不同则退化为段落级 DEL+ADD）→ 组内标点归因防线（L1/L2/L3/W）→
-    全量 merge → 重建校验 → _build_segments + _attach_spans。
+    实词不同则退化为段落级 DEL+ADD）→ eq 段对原文不同 → 间隙对齐细粒度化
+    → 全量 merge → 重建校验 → _build_segments + _attach_spans。
 
     正确性保证：
-      - 段落对齐基于精确哈希（内容完全相同的段才 eq），LCS 保证覆盖全文；
+      - 段落对齐基于归一化哈希（仅标点/空白/U+2029 差异的段也 eq），
+        LCS 保证覆盖全文；eq 段对原文不同时做段对间隙对齐（回退 DMP），
+        输出 raw_diffs 仍能精确重构 A/B 两侧（数学等价，无信息丢失）；
       - 输出 raw_diffs 与全局路径同构（eq/del/add 三元组 + mod 由
         _build_segments 合成），前端渲染/编辑/autosave 零改动；
       - 重建校验：B 侧严格相等；A 侧允许空白差异（W 归因隐藏孤立空白）。
     """
     pa = _split_keep(orig, _SEP)
     pb = _split_keep(modified, _SEP)
-    ha = [hashlib.md5(p.encode("utf-8")).hexdigest() for p in pa]
-    hb = [hashlib.md5(p.encode("utf-8")).hexdigest() for p in pb]
+    # 双哈希（方案 B）：原文精确哈希 + 归一化哈希（_strip_sep 剥离标点/空白/U+2029）
+    ha_raw = [hashlib.md5(p.encode("utf-8")).hexdigest() for p in pa]
+    hb_raw = [hashlib.md5(p.encode("utf-8")).hexdigest() for p in pb]
+    ha_norm = [hashlib.md5(_strip_sep(p).encode("utf-8")).hexdigest() for p in pa]
+    hb_norm = [hashlib.md5(_strip_sep(p).encode("utf-8")).hexdigest() for p in pb]
 
     n, m = len(pa), len(pb)
     if n * m > _PARA_LCS_MAX_CELLS:
         raise ValueError(f"para LCS matrix too large: {n}x{m}")
 
-    # ── 段落级完整 DP LCS ──
+    # ── 段落级完整 DP LCS（归一化哈希 eq）──
     dp = [[0] * (m + 1) for _ in range(n + 1)]
     for i in range(n):
-        hi = ha[i]
+        hi = ha_norm[i]
         row = dp[i]
         nrow = dp[i + 1]
         for j in range(m):
-            if hi == hb[j]:
+            if hi == hb_norm[j]:
                 nrow[j + 1] = row[j] + 1
             else:
                 nrow[j + 1] = max(row[j + 1], nrow[j])
 
-    # ── 回溯对齐 ──
+    # ── 回溯对齐（归一化哈希）──
     align = []
     i, j = n, m
     while i > 0 and j > 0:
-        if ha[i - 1] == hb[j - 1]:
+        if ha_norm[i - 1] == hb_norm[j - 1]:
             align.append(("eq", i - 1, j - 1))
             i -= 1
             j -= 1
@@ -555,7 +587,7 @@ def diff_texts_para_lcs(
         j -= 1
     align.reverse()
 
-    # ── 组装：eq 原样；连续 del/add 组成替换组，限长策略 fine/coarse ──
+    # ── 组装：eq 原样（原文不同 → 段对间隙对齐）；连续 del/add 组成替换组 ──
     dmp = diff_match_patch()
     dmp.Diff_Timeout = _DMP_FINE_TIMEOUT
     raw_parts: list = []
@@ -592,7 +624,19 @@ def diff_texts_para_lcs(
     for item in align:
         if item[0] == "eq":
             flush_pair()
-            raw_parts.append((0, pa[item[1]]))
+            ai, bi = item[1], item[2]
+            if ha_raw[ai] == hb_raw[bi]:
+                # 原文精确相同 → 原样 EQ
+                raw_parts.append((0, pa[ai]))
+            else:
+                # 归一化对齐但原文不同（仅标点/空白/U+2029 差异）→ 段对间隙对齐
+                # （方案 B 实验结论：间隙对齐比段内 DMP 快 4.5 倍、mod 更少、0 失败）
+                rebuilt = _coarse_punct_alignment(pa[ai], pb[bi])
+                if rebuilt is not None:
+                    raw_parts.extend(rebuilt)
+                else:
+                    # 兜底：段对字符级 DMP（含标点归因防线），保证不丢信息
+                    raw_parts.extend(_diff_fine_group(dmp, pa[ai], pb[bi]))
         elif item[0] == "del":
             del_buf.append(pa[item[1]])
         else:

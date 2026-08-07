@@ -238,6 +238,34 @@ export function resolvePunctSubstring(raw: [number, string][]): [number, string]
 }
 
 /**
+ * 间隙对齐核心：把 gap 对 (d, a) 输出为 ops 序列。
+ * 公共前缀/后缀保持 EQ，中间差异部分输出 del/add——而非整体替换。
+ * 2026-08-07（方案 A 增强）：U+2029 作为分隔符后，若 gap 整体比较，
+ * 「誦\u2029 → 誦。\u2029」（用户只加句号）会输出 del '\u2029' +
+ * add '。\u2029' 合成 mod；公共对齐后输出 add '。' + eq '\u2029'。
+ * 与后端 diff_engine._align_gap_pair 逻辑一致。
+ */
+function alignGapPair(d: string, a: string): [number, string][] {
+  if (d === a) return d ? [[0, d]] : [];
+  const out: [number, string][] = [];
+  // 公共前缀
+  let i = 0;
+  while (i < d.length && i < a.length && d[i] === a[i]) i++;
+  if (i) out.push([0, d.slice(0, i)]);
+  // 公共后缀（前缀之后）
+  let jd = d.length;
+  let ja = a.length;
+  while (jd > i && ja > i && d[jd - 1] === a[ja - 1]) {
+    jd--;
+    ja--;
+  }
+  if (jd > i) out.push([-1, d.slice(i, jd)]);
+  if (ja > i) out.push([1, a.slice(i, ja)]);
+  if (jd < d.length) out.push([0, d.slice(jd)]);
+  return out;
+}
+
+/**
  * 实词对齐兜底（L3）：把「del X + add Y」中去标点后实词串相同的对，
  * 强制按标点归因重写。这是标点归因三层的最后防线：
  * 只要用户未改实词（去标点后实词串一致），无论 DMP 怎么切，
@@ -260,11 +288,12 @@ export function resolvePunctAlignment(raw: [number, string][]): [number, string]
   if (n < 2) return raw;
 
   const splitBySep = (s: string): { gaps: string[]; chars: string[] } => {
-    // 标点与空白都视为分隔符：gaps[k] 为第 k 个实词前的分隔符段
+    // 标点、空白与 U+2029（段落分隔符）都视为分隔符：
+    // gaps[k] 为第 k 个实词前的分隔符段（与后端 split_by_sep 一致）
     const gaps = [""];
     const chars: string[] = [];
     for (const c of s) {
-      if (PUNCT_CHARS.has(c) || WS_CHARS.has(c)) {
+      if (PUNCT_CHARS.has(c) || WS_CHARS.has(c) || c === "\u2029") {
         gaps[gaps.length - 1] += c;
       } else {
         chars.push(c);
@@ -275,7 +304,7 @@ export function resolvePunctAlignment(raw: [number, string][]): [number, string]
   };
 
   const stripSep = (s: string) =>
-    Array.from(s).filter((c) => !PUNCT_CHARS.has(c) && !WS_CHARS.has(c)).join("");
+    Array.from(s).filter((c) => !PUNCT_CHARS.has(c) && !WS_CHARS.has(c) && c !== "\u2029").join("");
 
   const out: [number, string][] = [];
   let i = 0;
@@ -297,12 +326,10 @@ export function resolvePunctAlignment(raw: [number, string][]): [number, string]
         if (cx.join("") === cy.join("")) {
           const rebuilt: [number, string][] = [];
           for (let k = 0; k < cx.length; k++) {
-            if (gx[k]) rebuilt.push([-1, gx[k]]);
-            if (gy[k]) rebuilt.push([1, gy[k]]);
+            rebuilt.push(...alignGapPair(gx[k], gy[k]));
             rebuilt.push([0, cx[k]]);
           }
-          if (gx[cx.length]) rebuilt.push([-1, gx[cx.length]]);
-          if (gy[cy.length]) rebuilt.push([1, gy[cy.length]]);
+          rebuilt.push(...alignGapPair(gx[cx.length], gy[cy.length]));
           // 邻接安全检查：防止重写后的 del/add 与前后操作相邻被合成 mod
           let safe = true;
           if (rebuilt.length > 0) {

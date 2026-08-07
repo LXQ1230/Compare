@@ -36,6 +36,14 @@
 - 497 两版差异本质：重排重写型，125 处重写区段落级展示语义合理
 - **coarse 标点归因已修复（2026-08-06）**：coarse 分支新增 `_coarse_punct_alignment`（实词对齐检测 → 间隙对齐标点归因），实词相同则输出细粒度 DEL标点+EQ实词+ADD标点，实词不同保持段落级；497 实测 mod 120→22，total 6074→21886
 
+## 497 整段 DEL+ADD 修复（2026-08-07 落地，方案 A+B 全过）
+- **方案 A（U+2029 归因）**：`_strip_sep` 剥离 U+2029（原被当实词 → 段落符位置差异误判实词不同）；L3 + coarse 的 `split_by_sep` 视 U+2029 为分隔符；前端 `unicode.ts` stripSep/splitBySep 同步
+- **关键补充 `_align_gap_pair`**（前后端同构）：间隙对齐对 gap 做公共前缀/后缀对齐——`誦\u2029`→`誦。\u2029` 公共后缀保持 EQ 仅 ADD '。'，避免整体比较误判替换（否则 mod 22→303，公共对齐后 22→15）。**只改 _strip_sep 不改 split_by_sep 会 B 侧重建 FAIL**（cx/cy 长度不一致）
+- **方案 B（归一化哈希 LCS）**：`diff_texts_para_lcs` 双哈希（原文 + `_strip_sep` 归一化），LCS eq 用归一化哈希；eq 段对原文不同 → `_coarse_punct_alignment` 间隙对齐（回退 `_diff_fine_group` DMP 兜底）；重建校验不变（B 严格 + A 去空白）
+- 497 实测：整段 DEL+ADD 15→**0**（文档预期残余 2，实为段落合并场景被间隙对齐消化）；LCS eq 613→1634；替换组 320→3；stats total 24363 / mod 1；耗时 1.04s；重建 PASS；后端 159 + 前端 200 全过
+- 空归一化段对（`\u2029` vs `。\u2029`）20 个回退 DMP（wx 空 → coarse 返回 None），功能正确
+- 方案文档：`docs/497整段DEL+ADD修复方案-2026-08-07.md`（含 4.7 实测结果表）
+
 ## 查看态渲染路线（2026-08-06 方案 A）
 - 大文档（scale M/L）+ 横排（txt/md）→ CodeMirrorDiff 只读 CM（虚拟行）
 - 大文档 + 竖排 IDML（docMeta.vertical）→ **UnifiedView/SplitView v-html 竖排**（CM6 不支持 vertical-rl；2026-08-06 修复前 497 查看模式横排的根因）
